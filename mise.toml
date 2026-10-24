@@ -1,0 +1,4 @@
+# Toolchain for local work and CI (jdx/mise-action reads this file).
+[tools]
+node = "24.22.1"
+just = "1.59"

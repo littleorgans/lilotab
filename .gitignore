@@ -1,0 +1,12 @@
+node_modules/
+dist/
+release/
+*.zip
+*.crx
+*.pem
+*.tsbuildinfo
+.vite/
+coverage/
+.DS_Store
+.vitest/
+.smoke/

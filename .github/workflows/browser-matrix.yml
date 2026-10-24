@@ -1,0 +1,91 @@
+name: browser matrix
+
+# The headless smoke harness (test/chrome) over Chromium browsers on Linux and Windows. Evidence only, never a required
+# check: each cell writes one job summary line and uploads its run folder.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    # Only what changes the built extension or the harness run; docs and unit test pushes skip.
+    paths:
+      - src/**
+      - test/chrome/**
+      - manifest.config.ts
+      - vite.config.ts
+      - package.json
+      - package-lock.json
+      - mise.toml
+      - justfile
+      - .github/workflows/browser-matrix.yml
+      - .github/scripts/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # One release build for every cell, so each browser loads the same files; Node and just come from mise.toml as in ci.yml.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: just install build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: build
+          path: |
+            dist/
+            release/
+          retention-days: 3
+
+  smoke:
+    needs: build
+    name: ${{ matrix.browser }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # cft-pinned is the harness's CHROME_BUILD; cft-148 is the manifest's minimum_chrome_version.
+        browser: [cft-pinned, cft-148, chrome, edge, brave, opera, vivaldi]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CELL: ${{ matrix.browser }} on ${{ matrix.os }}
+      RUN: smoke-run
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - run: just install
+      - uses: actions/download-artifact@v8
+        with:
+          name: build
+      - id: browser
+        run: bash .github/scripts/install-browser.sh "${{ matrix.browser }}"
+      - id: smoke
+        if: steps.browser.outputs.skip == ''
+        # A step limit, below the job's, keeps the summary and upload after a hung browser.
+        timeout-minutes: 20
+        env:
+          EXE: ${{ steps.browser.outputs.exe }}
+        run: node test/chrome/run.mjs --ext dist --out "$RUN" ${EXE:+--chrome "$EXE"}
+      - if: always()
+        env:
+          VERSION: ${{ steps.browser.outputs.version }}
+          SKIP: ${{ steps.browser.outputs.skip || (steps.browser.outcome != 'success' && 'browser step did not complete') || '' }}
+        run: node test/chrome/summary.mjs
+      - if: always() && steps.smoke.outcome != 'skipped'
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-${{ matrix.os }}-${{ matrix.browser }}
+          path: |
+            ${{ env.RUN }}/
+            !${{ env.RUN }}/**/profile-*/**
+          retention-days: 7
+          if-no-files-found: ignore

@@ -1,0 +1,10 @@
+{
+  // Build configs and tests, which run in Node.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "node_modules/.tmp/tsconfig.node.tsbuildinfo",
+    "lib": ["ES2024"],
+    "types": ["node", "chrome", "vite/client"]
+  },
+  "include": ["*.ts", "test", "src/**/*.test.ts"]
+}
