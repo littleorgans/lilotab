@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Known issues
+    url: https://github.com/littleorgans/lilotab/blob/main/KNOWN_ISSUES.md
+    about: Problems with a known cause and a workaround

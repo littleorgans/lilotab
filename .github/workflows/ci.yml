@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Node and just come from mise.toml; vp comes from the lockfile through npm ci. setup-vp is not used because it
+      # installs its own Node and a global vp, which would split CI from the local toolchain.
+      - uses: jdx/mise-action@v5
+      - run: just ci

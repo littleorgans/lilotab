@@ -1,0 +1,11 @@
+{
+  // The pure core sees only the ES library: no DOM, no chrome, no Node, so any browser API is a type error.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "node_modules/.tmp/tsconfig.core.tsbuildinfo",
+    "lib": ["ES2024"],
+    "types": []
+  },
+  "include": ["src/core"],
+  "exclude": ["src/**/*.test.ts"]
+}

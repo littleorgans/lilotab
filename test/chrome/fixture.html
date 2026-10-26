@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><title>H1 Source</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font: 15px system-ui;
+      color: #182d40;
+      background: #e8eef2;
+      background-image: repeating-linear-gradient(135deg, transparent 0 24px, #c6dce8 24px 48px);
+    }
+    header {
+      background: #173c51;
+      color: #fff;
+      padding: 24px 40px;
+      display: flex;
+      justify-content: space-between;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0;
+    }
+    main {
+      padding: 24px;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+    }
+    article {
+      padding: 18px;
+      background: #fff;
+      border: 1px solid #c8d5dd;
+      border-radius: 10px;
+      min-height: 180px;
+    }
+    article:nth-child(3n) {
+      background: #ffd481;
+    }
+    article:nth-child(3n + 1) {
+      background: #b8e4d6;
+    }
+    h2 {
+      font-size: 16px;
+      margin: 0 0 12px;
+    }
+    p {
+      line-height: 1.6;
+    }
+    input,
+    button,
+    a {
+      font: inherit;
+      padding: 8px;
+    }
+    small {
+      color: #536575;
+    }
+    .chart {
+      height: 70px;
+      background: repeating-linear-gradient(90deg, #3d789e 0 13px, transparent 13px 21px);
+      clip-path: polygon(0 80%, 15% 25%, 30% 65%, 50% 5%, 65% 40%, 80% 0, 100% 20%, 100% 100%, 0 100%);
+    }
+  </style>
+  <header>
+    <h1>H1 local workspace</h1>
+    <span>Busy backdrop fixture</span>
+  </header>
+  <main></main>
+  <script>
+    const name = new URL(location.href).searchParams.get('name') || 'Source';
+    document.title = 'H1 ' + name;
+    document.querySelector('main').innerHTML = Array.from(
+      { length: 24 },
+      (_, i) =>
+        `<article><h2>${['Planning', 'Activity', 'Notes', 'Overview'][i % 4]} ${i + 1}</h2><div class="chart"></div><p>Window ${i + 1} · shared ideas · recent updates</p><small>Local fixture data</small></article>`,
+    ).join('');
+    document
+      .querySelector('article')
+      .insertAdjacentHTML(
+        'afterbegin',
+        '<label>Page focus <input id="page-input" value="unchanged"></label><button id="outside">Outside action</button><a href="#details">Details</a>',
+      );
+    window.__h1Page = [];
+    for (const type of ['keydown', 'keyup'])
+      document.addEventListener(type, (e) => window.__h1Page.push({ type, key: e.key, prevented: e.defaultPrevented }));
+    if (name === 'Audio') {
+      const audio = new Audio('/tone.wav');
+      audio.loop = true;
+      audio.play().catch(() => {});
+      window.fixtureAudio = audio;
+    }
+  </script>
+</html>

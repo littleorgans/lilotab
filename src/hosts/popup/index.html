@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- The list's frame from the first paint, before any script runs (C-POP-08): the default dark theme's colour and a
+         few rows' size until the list view mounts. The selector ignores text nodes: the parser moves the whitespace after
+         </body> into the body, so :empty never matches. -->
+    <style>
+      html {
+        color-scheme: dark;
+        background: #1f1f22;
+      }
+      body {
+        margin: 0;
+      }
+      body:not(:has(*)) {
+        width: 542px;
+        height: 176px;
+      }
+    </style>
+    <script type="module" src="./index.ts"></script>
+  </head>
+  <body></body>
+</html>

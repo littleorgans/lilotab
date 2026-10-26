@@ -1,0 +1,11 @@
+{
+  // Worker and hosts: the browser side, with DOM and chrome types.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "types": ["chrome", "@crxjs/vite-plugin/client", "vite/client"]
+  },
+  "include": ["src", "test/adapters/host-link.test.ts"],
+  "exclude": ["src/core", "src/**/*.test.ts"]
+}

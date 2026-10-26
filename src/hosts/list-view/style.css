@@ -1,0 +1,295 @@
+/* The list's look for both hosts. One 4 px spacing grid, two type sizes, system font; text and the highlighted row
+   meet WCAG AA in every theme (C-A11Y-06). The frozen look arrives as classes on .panel (03-components 4.6). */
+
+.panel {
+  --row: 32px;
+  --text: 13px;
+  --small: 11px;
+  --icon: 16px;
+  --pad: 8px;
+  --inset: 12px;
+  --radius: 6px;
+  --bg: light-dark(#ffffff, #1f1f22);
+  --fg: light-dark(#1d1d1f, #ececee);
+  --fg2: light-dark(#5f5f66, #a1a1a9);
+  --line: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 10%));
+  --tint: light-dark(rgb(0 0 0 / 6%), rgb(255 255 255 / 9%));
+  --ring: light-dark(#0a60cf, #4a94ff);
+  --accent: #0a60cf;
+  --on-accent: #ffffff;
+
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: min(70vh, 640px);
+  overflow: hidden;
+  pointer-events: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    var(--text) / 1.3 system-ui,
+    sans-serif;
+  cursor: default;
+  user-select: none;
+}
+
+/* Theme (C-SET-06): Match system follows prefers-color-scheme. */
+.panel.dark {
+  color-scheme: dark;
+}
+.panel.light {
+  color-scheme: light;
+}
+.panel.system {
+  color-scheme: light dark;
+}
+
+/* Text size Large grows row text and row height (C-A11Y-05). */
+.panel.large {
+  --row: 40px;
+  --text: 16px;
+  --small: 13px;
+}
+
+/* Whole strip cells (C-WIN-16): a cell and its gap are 44 px, so n cells make a 44n - 4 px strip inside the 8 px head
+   padding and 1 px border, a 44n + 14 px panel. At most 12 cells, snapping down by whole cells in narrow windows with
+   16 px left each side. */
+.panel.overlay {
+  --line: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 14%));
+
+  width: calc(round(down, min(100vw - 46px, 528px), 44px) + 14px);
+  box-shadow: 0 16px 48px light-dark(rgb(0 0 0 / 22%), rgb(0 0 0 / 35%));
+}
+
+/* Glass over the page (C-HOLD-26): a fixed tint that holds C-A11Y-06 over pure white or black before any blur, with
+   brighter secondary text. Without backdrop-filter the panel keeps the solid --bg and today's --fg2. */
+@supports (backdrop-filter: blur(1px)) {
+  .panel.overlay {
+    --fg2: light-dark(#55555c, #b4b4bb);
+
+    background: light-dark(rgb(250 250 252 / 86%), rgb(32 32 35 / 84%));
+    backdrop-filter: blur(30px) saturate(160%);
+  }
+}
+
+/* The popup fills its window, which sizes to it (Chrome caps a popup at 800 by 600). It stays solid (C-HOLD-26); the
+   transparent side borders keep the overlay's 12 cell strip (C-WIN-16). */
+.panel.popup {
+  width: 542px;
+  max-height: 600px;
+  border: 0;
+  border-inline: 1px solid transparent;
+  border-radius: 0;
+}
+
+/* Hidden until a frame shows it; the popup keeps its frame painted from the first paint (C-POP-08). A closing list
+   keeps .shown while it fades. Motion runs from MOTION in index.ts (C-A11Y-04). */
+.panel:not(.shown),
+.panel.popup:not(.shown) > * {
+  visibility: hidden;
+}
+.panel.popup:not(.shown) {
+  visibility: visible;
+}
+
+/* Strip or search field: one slot above the list (C-WIN-01, C-SRCH-02); both share its cell while they swap. */
+.head {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding: var(--pad);
+  border-bottom: 1px solid var(--line);
+}
+.head > * {
+  grid-area: 1 / 1;
+}
+
+.strip {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.cell {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: calc(var(--icon) + 2 * var(--inset));
+  height: var(--row);
+  border-radius: var(--radius);
+}
+.cell[aria-selected='true'] {
+  background: var(--tint);
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+
+.field {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  height: var(--row);
+  margin: 0;
+  padding: 0 var(--inset);
+  border: 0;
+  border-radius: var(--radius);
+  outline: none;
+  background: var(--tint);
+  color: var(--fg);
+  font: inherit;
+  user-select: text;
+}
+.field::placeholder {
+  color: var(--fg2);
+  opacity: 1;
+}
+
+/* As tall as its longest window, so showing another window never moves the strip (C-WIN-15); scrolls on its own
+   with no scrollbar (C-HOLD-19). */
+.list,
+.empty {
+  box-sizing: border-box;
+  flex: 0 1 auto;
+  min-height: 0;
+  height: calc(var(--rows) * var(--row) + 2 * var(--pad));
+  margin: 0;
+  padding: var(--pad);
+}
+.list {
+  position: relative;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  outline: none;
+}
+.empty {
+  display: grid;
+  place-items: center;
+  color: var(--fg2);
+}
+.empty:empty,
+.panel.none .list:not(.copy) {
+  display: none;
+}
+
+/* "Could not copy" for 2 s (C-SRCH-26): one line over the list's foot, out of layout. */
+.notice {
+  position: absolute;
+  inset: auto var(--pad) var(--pad);
+  padding: 4px var(--inset);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--fg);
+  font-size: var(--small);
+  text-align: center;
+}
+.notice:empty {
+  display: none;
+}
+
+/* The outgoing rows' picture during a swap, over the live list and out of layout. */
+.copy {
+  position: absolute;
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--pad);
+  height: var(--row);
+  padding: 0 var(--inset);
+  border-radius: var(--radius);
+  white-space: nowrap;
+}
+.row[aria-selected='true'] {
+  --fg2: rgb(255 255 255 / 85%);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+/* A fixed box, so an icon arriving late moves nothing (C-ICON-04); the placeholder is a neutral square (C-ICON-03). */
+.icon {
+  flex: none;
+  width: var(--icon);
+  height: var(--icon);
+  border-radius: 4px;
+}
+span.icon {
+  background: var(--tint);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Search rows show the host after the title (C-SRCH-21) and a window marker (C-SRCH-07). */
+.site {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg2);
+  font-size: var(--small);
+}
+
+.pin {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  fill: var(--fg2);
+}
+
+/* Still, with no mute control (C-HOLD-25). */
+.sound {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--fg2);
+}
+
+/* A recently closed row's mark, in the window marker's box; shown with one window too (C-SRCH-27). */
+.closed {
+  flex: none;
+  width: calc(var(--small) + 6px);
+  height: calc(var(--small) + 6px);
+  color: var(--fg2);
+}
+
+.marker {
+  flex: none;
+  box-sizing: border-box;
+  min-width: calc(var(--small) + 6px);
+  height: calc(var(--small) + 6px);
+  padding: 0 4px;
+  border: 1px solid var(--fg2);
+  border-radius: 999px;
+  color: var(--fg2);
+  font-size: var(--small);
+  line-height: calc(var(--small) + 4px);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.marker.current {
+  background: var(--fg2);
+  color: var(--bg);
+}
+.row[aria-selected='true'] .marker.current {
+  color: var(--accent);
+}
+
+.list:not(.search) :is(.site, .marker),
+.panel.solo .marker {
+  display: none;
+}
