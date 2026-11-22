@@ -13,6 +13,50 @@ export const TIMING_MAX = 500; // count bound; the worker also limits the serial
 export const EVENTS_MAX = 120; // per gesture timeline, oldest dropped
 export const PROBE_MAX = 120; // per popup trace, oldest dropped
 
+// The headless bench arms marks in the worker and the source page's isolated world. Ordinary timing sessions
+// leave them off. Mark names are also the boundaries used to read the CDP trace.
+export const BENCH_OPEN = 'lilotab:bench-open-search';
+export const BENCH_TAP = 'lilotab:bench-tap';
+export const BENCH_ARMED = '__lilotabBenchArmed';
+export const BENCH_MARK = {
+  request: 'lilotab:request',
+  entry: 'lilotab:entry',
+  queryStart: 'lilotab:query-start',
+  queryEnd: 'lilotab:query-end',
+  startSent: 'lilotab:start-sent',
+  startReceived: 'lilotab:start-received',
+  listStart: 'lilotab:list-start',
+  listEnd: 'lilotab:list-end',
+  firstFrame: 'lilotab:first-frame',
+  key: 'lilotab:key',
+  frame: 'lilotab:frame-rendered',
+  activated: 'lilotab:activated',
+} as const;
+
+export const TAP_MARK = {
+  listening: 'lilotab:tap-listening',
+  releaseSeen: 'lilotab:tap-release-seen',
+  releasePosted: 'lilotab:tap-release-posted',
+  overlayCut: 'lilotab:tap-overlay-cut',
+  overlayRemoved: 'lilotab:tap-overlay-removed',
+  switchRequested: 'lilotab:tap-switch-requested',
+  tabUpdate: 'lilotab:tap-tab-update',
+  tabUpdated: 'lilotab:tap-tab-updated',
+  focusRequested: 'lilotab:tap-focus-requested',
+  switchSettled: 'lilotab:tap-switch-settled',
+} as const;
+
+const benchContext = globalThis as typeof globalThis & { [BENCH_ARMED]?: true };
+
+export function armBenchMarks(): void {
+  benchContext[BENCH_ARMED] = true;
+}
+
+export function benchMark(name: string): PerformanceMark | undefined {
+  if (!benchContext[BENCH_ARMED]) return;
+  return performance.mark(name);
+}
+
 export type PageClass = 'http' | 'newtab' | 'internal' | 'webstore' | 'pdf' | 'file' | 'other';
 export type InputClass = 'release' | 'key' | 'pointer' | 'other';
 export type EndReason =

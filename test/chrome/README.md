@@ -29,7 +29,7 @@ Every scenario names its contract or known bug in its expected text. AC and JY i
 | List input, focus and cleanup | `10-*`                                                                 | AC-16, 5.10; C-TAP-10, C-TAP-11, C-HOLD-12, C-SRCH-20, C-SW-02, C-SW-03 |
 | Journeys and traffic          | `JY-1-*` through `JY-9-*`                                              | JY-1 to JY-9, including C-WIN-06 global history stepping                |
 | Overlay                       | `AC-15-*` through `AC-19-*`                                            | AC-15 to AC-19; C-SEC-01, C-KEY-06, C-HOLD-18, C-HOLD-20, C-SEC-03      |
-| Shared list                   | `AC-22-*` through `AC-25-*`                                            | AC-22 to AC-25; rows, semantics, scrolling, contrast and text size      |
+| Shared list                   | `AC-22-*` through `AC-25-*`                                            | AC-22 to AC-25; rows, semantics, scrolling, contrast, text size, icons  |
 | Icons                         | `AC-14-*`                                                              | AC-14; C-ICON-01, C-ICON-05, C-ICON-07                                  |
 | Pages                         | `AC-26-*` through `AC-29-*`                                            | AC-26 to AC-29; shortcut, saves, defaults, locking and clear feedback   |
 | Lifecycle                     | `AC-03-*`, `AC-09-*`, `AC-20-*`                                        | AC-03, AC-09, AC-20; install welcome, recents reset, orphan cleanup     |

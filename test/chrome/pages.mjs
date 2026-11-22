@@ -269,6 +269,7 @@ export function pageScenarios(c, e, add) {
             'Hold delay',
             'Tab order',
             'Show the list',
+            'On release',
             'Include recently closed tabs',
             'Tab count badge',
             'Theme',
@@ -319,7 +320,7 @@ export function pageScenarios(c, e, add) {
           await (await opened.page())?.close();
           return {
             pass:
-              locked.disabled.length === 10 &&
+              locked.disabled.length === 11 &&
               locked.disabled.every(Boolean) &&
               !locked.buttons['Restore defaults'] &&
               locked.notice.join() ===

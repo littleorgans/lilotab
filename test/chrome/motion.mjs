@@ -37,7 +37,7 @@ export function motionScenarios(c, e, add) {
         moves = setting === 'never' || (setting === 'system' && !osReduce);
       add(
         id,
-        `${setting}, OS ${osReduce ? 'reduce' : 'normal'}: ${moves ? '100 ms open, 90 ms two way head and row swap; overlay 70 ms cancel' : 'no animation on open, swap or cancel'} (AC-25; C-A11Y-04, C-SET-08)`,
+        `${setting}, OS ${osReduce ? 'reduce' : 'normal'}: ${moves ? '100 ms open, 90 ms two way head and row swap; overlay 70 ms cancel' : 'no timed animation on open, swap or cancel'} (AC-25; C-A11Y-04, C-SET-08)`,
         async () => {
           const h = await c.open(flavor, { reduceMotion: setting, osReduce, freeze: [100] }),
             opened = await state(c, h),
@@ -73,10 +73,9 @@ export function motionScenarios(c, e, add) {
           const back = await state(c, h),
             backProbe = await probe(c, h);
           const reverse = !back.search && (moves ? swapProof(back, backProbe) : noMotion(backProbe));
-          const headStable =
-            opened.headLayoutHeight > 0 &&
-            opened.headLayoutHeight === search.headLayoutHeight &&
-            back.headLayoutHeight === search.headLayoutHeight;
+          // The search head is one row and its padding, lower than the strip's cells (owner accepted, craft design 5.2);
+          // back in hold it has its first height again.
+          const headStable = opened.headLayoutHeight > 0 && back.headLayoutHeight === opened.headLayoutHeight;
           await c.resume(h);
           await pause(110);
           await c.resetProbe(h, [70]);
@@ -166,7 +165,7 @@ export function motionScenarios(c, e, add) {
     for (const during of ['open', 'swap', 'close'])
       add(
         `9-os-change-${flavor}-${during}`,
-        'Match system cancels live motion and removes temporary rows immediately when OS reduce becomes enabled (AC-25; C-A11Y-04, C-SET-08)',
+        'Match system cancels live timed motion and removes temporary rows immediately when OS reduce becomes enabled (AC-25; C-A11Y-04, C-SET-08)',
         async () => {
           const h = await c.open(flavor, {
             reduceMotion: 'system',
@@ -250,7 +249,7 @@ export function motionScenarios(c, e, add) {
   );
   add(
     '9-swap-interruption',
-    'Rapid F toggles cancel superseded swaps; close clears visual copies and all animations (AC-25; C-A11Y-04)',
+    'Rapid F toggles cancel superseded swaps. Close clears visual copies and timed animations (AC-25; C-A11Y-04)',
     async () => {
       const h = await c.open('overlay');
       await pause(110);

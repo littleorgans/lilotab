@@ -1,9 +1,11 @@
 // Message shapes between worker and hosts and the options page, and the limits producers and parsers share (05-events 4.9).
 
 import type { Settings } from '../settings/index.ts';
-import type { Millis, RowRef } from '../types.ts';
+import type { AttemptId, Millis, RowRef } from '../types.ts';
 
 export const PROTOCOL = 1;
+
+export const portName = (attempt: AttemptId): string => `${String(PROTOCOL)}|${attempt}`;
 
 export const TITLE_MAX = 500; // ListRow.title, UTF-16 code units
 export const SITE_MAX = 253; // ListRow.site, UTF-16 code units
@@ -26,12 +28,33 @@ export type Look = Pick<Settings, 'theme' | 'reduceMotion' | 'textSize'>;
 
 export type IconSrc = string; // 'data:image/png;base64,' then base64, at most ICON_MAX characters
 
+// Title noise in UTF-16 offsets of ListRow.title (C-HOLD-34): the leading count [0, lead), 0 for none; the trailing
+// site name [tail, title.length), null for none.
+export interface Noise {
+  lead: number;
+  tail: number | null;
+}
+
+export const AGE_UNITS = ['m', 'h', 'd', 'w'] as const;
+// The largest count per unit: past it the next unit takes over, and 4 weeks means 4 or more, shown as 4w+ (C-HOLD-32).
+export const AGE_MAX: Readonly<Record<(typeof AGE_UNITS)[number], number>> = { m: 59, h: 23, d: 6, w: 4 };
+export interface Age {
+  n: number; // 1 to AGE_MAX[unit]
+  unit: (typeof AGE_UNITS)[number];
+}
+// Weeks at the cap: 4 or more, shown as 4w+ (C-HOLD-32).
+export const ageCapped = ({ n, unit }: Age): boolean => unit === 'w' && n === AGE_MAX.w;
+
 export interface ListRow {
   title: string; // '' renders site, else "Untitled" (C-HOLD-17)
   site: string;
   pinned: boolean;
   audible: boolean; // C-HOLD-25
+  sleeping: boolean; // a discarded tab: its icon dims and its name says Sleeping (C-A11Y-02)
   icon: IconSrc | null;
+  noise: Noise; // C-HOLD-34
+  age: Age | null; // fixed at the press; null on the source tab's row (C-HOLD-32)
+  dup: number | null; // the duplicate group, shared by every open row of one address (C-HOLD-33)
 }
 export interface ListView {
   windows: readonly { current: number; rows: readonly ListRow[] }[]; // [0] is the source window
@@ -44,9 +67,13 @@ export interface CopyText {
   url: string;
 }
 
+// The active order's name (C-HOLD-30): the tab order or Title in hold; Best match, Recent or Title in search.
+export type SortName = Settings['tabOrder'] | 'best' | 'title';
+
 // copy: the highlighted row's, null while the hold list is hidden or when the address passes URL_MAX.
 export type Frame =
-  // open: the open list (T-68); gone: rows closed with the close key, hidden (C-HOLD-14)
+  // open: the open list (T-68); gone: rows closed with the close key, hidden (C-HOLD-14); order: the shown window's
+  // rows in title order, null for the snapshot order (C-HOLD-29)
   | {
       mode: 'hold';
       visible: boolean;
@@ -55,9 +82,20 @@ export type Frame =
       row: number;
       gone: readonly RowRef[];
       copy: CopyText | null;
+      sort: SortName;
+      order: readonly number[] | null;
     }
-  // the host never writes query into the field; results omit gone rows
-  | { mode: 'search'; query: string; results: readonly RowRef[]; highlight: number; copy: CopyText | null };
+  // the host never writes query into the field; results omit gone rows, which gone names for live copy counts
+  // (C-HOLD-33)
+  | {
+      mode: 'search';
+      query: string;
+      results: readonly RowRef[];
+      highlight: number;
+      copy: CopyText | null;
+      sort: SortName;
+      gone: readonly RowRef[];
+    };
 // A RowRef whose window is view.windows.length names view.closed[row], the closed window: accepted in search results,
 // pick and icon patches; rejected in a hold frame and gone (05 4.9).
 
@@ -67,6 +105,7 @@ export interface StartView {
   mode: HostMode;
   binding: Binding | null; // null only in search mode from the toolbar (C-POP-09)
   quickTap: Settings['quickTap']; // frozen at the press (C-SET-12, C-SET-19)
+  onRelease: Settings['onRelease']; // frozen at the press (C-SET-12, C-SET-30)
   look: Look;
   view: ListView;
   frame: Frame;
@@ -92,9 +131,10 @@ export type HostInput =
   | { kind: 'pick'; row: RowRef } // click on a search result row (C-SRCH-17)
   | { kind: 'ping' }
   | { kind: 'activity' } // restarts idle where one runs (C-HOLD-13)
-  | { kind: 'jump'; to: 'first' | 'last' } // Home, End in search (K-31)
-  | { kind: 'page'; delta: 1 | -1; rows: number } // Page Down, Page Up in search; rows 1 to PAGE_MAX (K-32)
+  | { kind: 'jump'; to: 'first' | 'last' } // Home, End (K-31, C-HOLD-37)
+  | { kind: 'page'; delta: 1 | -1; rows: number } // Page Down, Page Up; rows 1 to PAGE_MAX (K-32, C-HOLD-37)
   | { kind: 'close' } // the close key on the highlighted row (K-33)
+  | { kind: 'sort' } // the sort key (K-35 to K-37)
   | { kind: 'cancel'; cause: CancelCause };
 
 export type DeclineReason = 'unfocused' | 'frameFocus' | 'pdf' | 'unsupported';

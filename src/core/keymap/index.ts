@@ -9,6 +9,7 @@ import {
   type Binding,
   type HostInput,
   type HostMode,
+  type StartView,
 } from '../protocol/index.ts';
 
 export interface KeyFacts {
@@ -25,7 +26,8 @@ export interface KeyFacts {
 }
 
 // binding null (toolbar search only): no key is the held letter or its Shift form (C-POP-09). origin: the start view's
-// mode; a list that started in search (toolbar) has no hold mode to go back to. open: hold is the open list (T-68).
+// mode; a list that started in search (toolbar) has no hold mode to go back to. open survives a search latch (T-68,
+// T-80); onRelease distinguishes a kept list (C-TAP-12).
 // field: whether the focused search field holds text (K-11, K-30) and a selection (K-14, K-34); null without it.
 // mac: the close and copy keys' modifiers (K-33, K-34). pageRows: the whole rows the list shows (K-32).
 export interface KeyContext {
@@ -33,6 +35,7 @@ export interface KeyContext {
   mode: HostMode;
   origin: HostMode;
   open: boolean;
+  onRelease: StartView['onRelease'];
   field: { text: boolean; selected: boolean } | null;
   mac: boolean;
   pageRows: number;
@@ -93,10 +96,38 @@ function copyKind(f: KeyFacts, mac: boolean): CopyKind | null {
   return f.shift ? 'titleUrl' : 'url';
 }
 
+// The sort key: S, held in closed hold and held or not in an open list (K-35, K-36); in search held S, or the platform
+// chord Cmd+S on macOS and Ctrl+S elsewhere, whatever the binding (K-37, C-POP-09). Off macOS search takes only a
+// produced S, so an AltGr character still types, as with the close key (K-33).
+function isSortKey(f: KeyFacts, c: KeyContext): boolean {
+  if (c.mode === 'hold') return isToken(f, 'S');
+  const s = c.mac ? isToken(f, 'S') : f.key.toUpperCase() === 'S';
+  return s && (isHeld(f, c.binding) || sameMods(f, { meta: c.mac, ctrl: !c.mac, alt: false, shift: false }));
+}
+
+const ENDS = [
+  ['Home', 'first'],
+  ['End', 'last'],
+] as const;
+const PAGES = [
+  ['PageDown', 1],
+  ['PageUp', -1],
+] as const;
+const tokenIn = <T>(f: KeyFacts, table: readonly (readonly [string, T])[]): T | undefined =>
+  table.find(([token]) => isToken(f, token))?.[1];
+
+// Home, End and the page keys, a page being the whole rows the list shows; search and the shown hold list (K-31, K-32).
+function endsOrPage(f: KeyFacts, c: KeyContext): HostInput | null {
+  const to = tokenIn(f, ENDS);
+  if (to) return { kind: 'jump', to };
+  const delta = tokenIn(f, PAGES);
+  return delta ? { kind: 'page', delta, rows: Math.min(Math.max(c.pageRows, 1), PAGE_MAX) } : null;
+}
+
 // A keydown in hold, open or not. Cancel comes first, so Esc and Backspace still cancel after a missed release; only
 // closed hold reads a key without the held key as that release. letterMove comes before the close and copy keys and
-// F, also for a binding whose letter is W, C or F. The open list is latched like search: no key is a release, and the
-// list keeps every key (C-TAP-11).
+// F, also for a binding whose letter is W, C or F; the sort key follows F, so a binding whose letter is S steps. The
+// open list is latched like search: no key is a release, and the list keeps every key (C-TAP-11).
 function classifyHoldKeydown(f: KeyFacts, c: KeyContext): Classified {
   const { binding: b, open } = c;
   if (f.key === 'Escape' || f.key === 'Backspace') return send({ kind: 'cancel', cause: 'key' }, true); // K-02, K-27
@@ -107,12 +138,15 @@ function classifyHoldKeydown(f: KeyFacts, c: KeyContext): Classified {
   if (arrow) return send({ kind: 'move', delta: arrow }, true); // K-04, K-05, K-23
   const side = SIDES[f.key];
   if (side) return send({ kind: 'window', delta: side }, true); // K-06, K-24, swallowed even with one window
+  const end = f.composing ? null : endsOrPage(f, c);
+  if (end) return send(end, true); // K-31, K-32: no composition active
   if (isCloseKey(f, c.mac)) return send({ kind: 'close' }, true); // K-33
   const copy = copyKind(f, c.mac);
   if (copy) return { input: { kind: 'activity' }, swallow: true, copy }; // K-34
   if (open && f.key === 'Enter') return send({ kind: 'enter' }, true); // K-25
   // K-07, K-26; a held down F toggles once
   if (isToken(f, 'F')) return send(f.repeat ? null : { kind: 'latchSearch' }, true);
+  if (isSortKey(f, c)) return send(f.repeat ? null : { kind: 'sort' }, true); // K-35, K-36, a repeat swallowed
   return send({ kind: 'activity' }, open); // K-08; K-29, Tab included: focus stays on the list
 }
 
@@ -134,40 +168,27 @@ function classifyOpen(f: KeyFacts, c: KeyContext): Classified {
   return classifyHoldKeydown(f, c);
 }
 
-const ENDS = [
-  ['Home', 'first'],
-  ['End', 'last'],
-] as const;
-const PAGES = [
-  ['PageDown', 1],
-  ['PageUp', -1],
-] as const;
-const tokenIn = <T>(f: KeyFacts, table: readonly (readonly [string, T])[]): T | undefined =>
-  table.find(([token]) => isToken(f, token))?.[1];
-
-// Esc with text clears the field and sends query '' (K-30); Shift with Home, End or a page key selects in the field,
-// and the copy key with text selected copies it (K-14).
+// Esc with text clears the field (K-30) or closes a kept list (C-TAP-12). Shift with Home, End or a page key
+// selects in the field, and the copy key with text selected copies it (K-14).
 function classifySearch(f: KeyFacts, c: KeyContext): Classified {
   const b = c.binding;
   if (f.type !== 'keydown' || f.composing) return NOTHING; // K-14, K-18; K-20 reports presses at keyup
   if (f.key === 'Enter') return send({ kind: 'enter' }, true); // K-10
   if (f.key === 'Escape') {
-    return send(c.field?.text ? { kind: 'query', text: '' } : { kind: 'cancel', cause: 'key' }, true); // K-30, K-11
+    const clear = c.field?.text && !(c.onRelease === 'keep' && c.open);
+    return send(clear ? { kind: 'query', text: '' } : { kind: 'cancel', cause: 'key' }, true); // K-30, K-11
   }
   const step = ARROWS[f.key] ?? letterMove(f, b);
   if (step) return send({ kind: 'move', delta: step }, true); // K-12
   if (isHeld(f, b) && isToken(f, 'F')) {
     return send(c.origin === 'hold' && !f.repeat ? { kind: 'leaveSearch' } : null, true); // K-22, else K-14
   }
-  if (!f.shift) {
-    const to = tokenIn(f, ENDS);
-    if (to) return send({ kind: 'jump', to }, true); // K-31
-    const delta = tokenIn(f, PAGES);
-    if (delta) return send({ kind: 'page', delta, rows: Math.min(Math.max(c.pageRows, 1), PAGE_MAX) }, true); // K-32
-  }
+  const end = f.shift ? null : endsOrPage(f, c);
+  if (end) return send(end, true); // K-31, K-32
   if (isCloseKey(f, c.mac)) return send({ kind: 'close' }, true); // K-33
   const copy = c.field?.selected ? null : copyKind(f, c.mac);
   if (copy) return { input: null, swallow: true, copy }; // K-34; K-20 reports the press
+  if (isSortKey(f, c)) return send(f.repeat ? null : { kind: 'sort' }, true); // K-37, so Option+S types no ß
   return NOTHING; // editing keys belong to the field (C-SRCH-15)
 }
 

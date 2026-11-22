@@ -3,6 +3,7 @@
 
 import type { ClosedTab } from '../../../core/index.ts';
 import { fault } from '../../diagnostics.ts';
+import { epochOf } from '../clock/index.ts';
 import { iconKeyOf } from '../icons/index.ts';
 import { isPrivate } from '../tabs/index.ts';
 
@@ -12,14 +13,23 @@ const CLOSED_MAX = 25; // C-SRCH-27; Chrome's sessions.MAX_SESSION_RESULTS
 // call throws, so it reads and restores nothing (C-SET-29).
 const api = (): typeof chrome.sessions | undefined => (chrome as Partial<typeof chrome>).sessions;
 
-// Most recent first; closed windows are skipped and private tabs dropped (C-SRCH-27, C-PRIV-08).
+// Most recent first; closed windows are skipped and private tabs dropped (C-SRCH-27, C-PRIV-08). The session's
+// lastModified, in seconds, is when the tab closed (C-HOLD-32).
 export async function recentlyClosed(): Promise<ClosedTab[]> {
   const sessions = api();
   if (!sessions) return [];
   const entries = await sessions.getRecentlyClosed({ maxResults: CLOSED_MAX });
-  return entries.flatMap(({ tab }) =>
+  return entries.flatMap(({ tab, lastModified }) =>
     tab?.sessionId !== undefined && !isPrivate(tab)
-      ? [{ sessionId: tab.sessionId, title: tab.title ?? '', url: tab.url ?? '', iconKey: iconKeyOf(tab) }]
+      ? [
+          {
+            sessionId: tab.sessionId,
+            title: tab.title ?? '',
+            url: tab.url ?? '',
+            iconKey: iconKeyOf(tab),
+            closedAt: epochOf(lastModified * 1000),
+          },
+        ]
       : [],
   );
 }

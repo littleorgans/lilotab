@@ -1,6 +1,7 @@
 // Ids and browser facts every core module shares (03-components 4.2, 4.3).
 
 export type Millis = number; // monotonic within one worker boot (05-events 2.2)
+export type EpochMs = number; // wall clock ms since the epoch, for display ages and Recent list order; never a due (05-events 2.2)
 export type TabId = number;
 export type WindowId = number;
 export type BootId = string; // random per worker evaluation; no ':' or '|'
@@ -23,10 +24,13 @@ export type RowRef = Cursor;
 
 export const sameRow = (a: RowRef, b: RowRef): boolean => a.window === b.window && a.row === b.row;
 export const hasRow = (rows: readonly RowRef[], ref: RowRef): boolean => rows.some((r) => sameRow(r, ref));
-// Whether a window still lists a row once rows closed with the close key leave (C-HOLD-14); a window with none leaves
-// window stepping and the strip (T-24, C-WIN-01).
-export const listsRows = (windows: readonly { rows: readonly unknown[] }[], gone: readonly RowRef[], window: number) =>
-  windows[window]?.rows.some((_, row) => !hasRow(gone, { window, row })) ?? false;
+type Windows = readonly { rows: readonly unknown[] }[];
+// How many rows a window still lists once rows closed with the close key leave (C-HOLD-14, C-WIN-17).
+export const rowsLeft = (windows: Windows, gone: readonly RowRef[], window: number): number =>
+  windows[window]?.rows.filter((_, row) => !hasRow(gone, { window, row })).length ?? 0;
+// A window with none left leaves window stepping and the strip (T-24, C-WIN-01).
+export const listsRows = (windows: Windows, gone: readonly RowRef[], window: number): boolean =>
+  rowsLeft(windows, gone, window) > 0;
 
 export interface SourceTab {
   tabId: TabId;
@@ -44,8 +48,10 @@ export interface LiveTab {
   url: string;
   pinned: boolean;
   audible: boolean; // read once at the press (C-HOLD-25)
+  sleeping: boolean; // discarded: switching to it reloads the page; read once at the press
   active: boolean;
   iconKey: string | null;
+  lastAccessed: EpochMs | null; // when the tab last became active in its window (C-HOLD-02, C-HOLD-32)
 }
 
 // One sessions.getRecentlyClosed tab entry, read at the press (C-SRCH-27); never a private tab (C-PRIV-08).
@@ -54,6 +60,7 @@ export interface ClosedTab {
   title: string;
   url: string;
   iconKey: string | null;
+  closedAt: EpochMs | null; // when it closed (C-HOLD-32)
 }
 
 // Developer builds log these; release builds drop them (C-SET-14). detail names a cause, field or kind, never a value.
@@ -66,6 +73,7 @@ export type DiagnosticCode =
   | 'prepFailed'
   | 'prepTimeout'
   | 'pendingOverflow'
+  | 'keepWarmFailed'
   | 'sessionSaveFailed'
   | 'settingsSaveFailed'
   | 'hostDeclined'

@@ -1,6 +1,14 @@
 // Shared builders for the host side core tables (07-tests TB-10 to TB-12): key facts, bindings and a start view.
 
-import { DEFAULTS, lookOf, type Binding, type KeyFacts, type ListRow, type StartView } from '../src/core/index.ts';
+import {
+  DEFAULTS,
+  lookOf,
+  type Binding,
+  type Frame,
+  type KeyFacts,
+  type ListRow,
+  type StartView,
+} from '../src/core/index.ts';
 import { codeOf } from './key-input.ts';
 
 type Held = Binding['held'];
@@ -40,7 +48,40 @@ export const row = (title: string, over: Partial<ListRow> = {}): ListRow => ({
   site: 'example.com',
   pinned: false,
   audible: false,
+  sleeping: false,
   icon: null,
+  noise: { lead: 0, tail: null },
+  age: null,
+  dup: null,
+  ...over,
+});
+
+type HoldFrame = Extract<Frame, { mode: 'hold' }>;
+type SearchFrame = Extract<Frame, { mode: 'search' }>;
+
+// A visible hold frame on the source row, in the default order.
+export const holdFrame = (over: Partial<HoldFrame> = {}): HoldFrame => ({
+  mode: 'hold',
+  visible: true,
+  open: false,
+  window: 0,
+  row: 0,
+  gone: [],
+  copy: null,
+  sort: 'recent',
+  order: null,
+  ...over,
+});
+
+// A search frame with an empty query and no results, in the default order.
+export const searchFrame = (over: Partial<SearchFrame> = {}): SearchFrame => ({
+  mode: 'search',
+  query: '',
+  results: [],
+  highlight: 0,
+  copy: null,
+  sort: 'recent',
+  gone: [],
   ...over,
 });
 
@@ -49,8 +90,9 @@ export const startView = (over: Partial<StartView> = {}): StartView => ({
   mode: 'hold',
   binding: CMD_E,
   quickTap: 'flip',
+  onRelease: 'switch',
   look: lookOf(DEFAULTS),
   view: { windows: [{ current: 0, rows: [row('Source'), row('Second'), row('Third')] }], closed: [] },
-  frame: { mode: 'hold', visible: true, open: false, window: 0, row: 0, gone: [], copy: null },
+  frame: holdFrame(),
   ...over,
 });

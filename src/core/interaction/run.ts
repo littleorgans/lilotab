@@ -1,10 +1,11 @@
 // One step's working state and the helpers every row shares: ids, recents updates, timers, frames and the exits.
 
-import type { Frame, StartView } from '../protocol/index.ts';
+import type { Frame, SortName, StartView } from '../protocol/index.ts';
+import { words } from '../ranking/text.ts';
 import { project, record, sameEnvelope, type Recents } from '../recents/index.ts';
 import { copyText, iconKeys, listView, rowOf } from '../snapshot/index.ts';
 import { diagnostic, hasRow, type Millis, type RequestId, type RowRef } from '../types.ts';
-import { highlightOf } from './selection.ts';
+import { highlightOf, shownOrder } from './selection.ts';
 import { HOLD_IDLE_MS, SEARCH_IDLE_MS, type Effect, type Interaction, type Model, type TimerKind } from './types.ts';
 
 // Mutable only inside one step; step returns its final values.
@@ -49,22 +50,43 @@ export function cancelTimer(run: Run, i: Interaction, timer: TimerKind): Interac
   return { ...i, due: { ...i.due, [timer]: null } };
 }
 
+// The default order's name: Best match with a word in the query, else Recent, since tab order never applies to search
+// (C-SET-05); in hold the frozen tab order (C-HOLD-30).
+function sortName(i: Interaction): SortName {
+  if (i.sort === 'title') return 'title';
+  if (!i.search) return i.snapshot.tabOrder;
+  return words(i.search.query).length ? 'best' : 'recent';
+}
+
 // copy is the highlighted row's, and none while the hold list is hidden: a quick tap puts no address in the page
-// (C-SRCH-26, C-HOLD-20).
+// (C-SRCH-26, C-HOLD-20). A hold frame names the shown window's title order; the host only paints it (C-HOLD-29).
 export function frameOf(i: Interaction, visible: boolean): Frame {
+  const sort = sortName(i);
   if (i.search) {
     const target = highlightOf(i.search);
-    return { mode: 'search', ...i.search, copy: target ? copyText(i.snapshot, target) : null };
+    return { mode: 'search', ...i.search, copy: target ? copyText(i.snapshot, target) : null, sort, gone: i.gone };
   }
   const { cursor } = i;
   const copy = visible ? copyText(i.snapshot, cursor) : null;
-  return { mode: 'hold', visible, open: i.open, window: cursor.window, row: cursor.row, gone: i.gone, copy };
+  const order = i.sort === 'title' ? shownOrder(i, cursor.window) : null;
+  return {
+    mode: 'hold',
+    visible,
+    open: i.open,
+    window: cursor.window,
+    row: cursor.row,
+    gone: i.gone,
+    copy,
+    sort,
+    order,
+  };
 }
 
 export const startView = (i: Interaction): StartView => ({
   mode: i.search ? 'search' : 'hold',
   binding: i.binding,
   quickTap: i.quickTap,
+  onRelease: i.onRelease,
   look: i.look,
   view: listView(i.snapshot),
   frame: frameOf(i, false),

@@ -4,8 +4,8 @@
 import { beforeEach, expect, test, vi } from 'vite-plus/test';
 import { portName, type Millis } from '../../src/core/index.ts';
 import type { ListSurface } from '../../src/hosts/list-view/index.ts';
-import { noteReleases } from '../../src/hosts/session/early.ts';
-import { runSession, type Mounted } from '../../src/hosts/session/index.ts';
+import { noteReleases, type ReleaseNotes } from '../../src/hosts/session/early.ts';
+import { runSession, type Host, type Mounted } from '../../src/hosts/session/index.ts';
 import { registerEntry } from '../../src/worker/adapters/entry/index.ts';
 import { createHostLink } from '../../src/worker/adapters/host-link/index.ts';
 import { createTabs } from '../../src/worker/adapters/tabs/index.ts';
@@ -118,7 +118,10 @@ test.each([
 );
 
 // The page half of a channel: a session on its own port whose posts reach the worker's, mounted on a focused page.
-function hostOn(worker: FakePort, extra: Partial<Mounted> = {}): FakePort {
+function hostOn(
+  worker: FakePort,
+  { focused, releases }: { focused?: Mounted['focused']; releases?: ReleaseNotes } = {},
+): FakePort {
   vi.stubGlobal('window', new EventTarget());
   vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }));
   const page = createPort(worker.name);
@@ -133,13 +136,12 @@ function hostOn(worker: FakePort, extra: Partial<Mounted> = {}): FakePort {
   } as unknown as ListSurface;
   const mounted: Mounted = {
     surface,
-    focused: () => Promise.resolve(null),
+    focused: focused ?? (() => Promise.resolve(null)),
     owns: () => false,
     latch: () => undefined,
     unlatch: () => undefined,
     hide: () => undefined,
     remove: () => undefined,
-    ...extra,
   };
   runSession(page as unknown as chrome.runtime.Port, {
     alive: () => true,
@@ -147,6 +149,7 @@ function hostOn(worker: FakePort, extra: Partial<Mounted> = {}): FakePort {
     decline: () => null,
     mount: () => mounted,
     closed: () => undefined,
+    ...(releases && { releases }),
   });
   for (const m of worker.posted) page.onMessage.dispatch(m, page);
   return page;
@@ -171,36 +174,102 @@ test.each([50, 50.75])('hostLink.wake: injection takes 20 ms from a dwell due at
   ]);
 });
 
-// C-POP-07, K-01: the popup page received the Cmd keyup before its session listened; it is the release, after ready.
-test('hostLink.earlyRelease: a release the popup page received before listening is heard after ready', async () => {
-  const { stepped } = launch('popup');
-  await settle();
-  const page = new Map<string, (e: Event) => void>();
-  const released = noteReleases({
-    addEventListener: (type: string, fn: (e: Event) => void) => page.set(type, fn),
-  });
-  // The trusted Cmd keyup's facts; the session reads a KeyboardEvent.
-  class Keyup {
-    readonly isTrusted = true;
-    readonly key = 'Meta';
-    readonly code = 'MetaLeft';
-    readonly metaKey = false;
-    readonly ctrlKey = false;
-    readonly altKey = false;
-    readonly shiftKey = false;
-    readonly isComposing = false;
-    readonly repeat = false;
-    readonly keyCode = 91;
+// The session reads KeyboardEvent facts. Node's EventTarget lets the tests deliver them to the same capture code.
+class CapturedKey extends Event {
+  readonly metaKey = false;
+  readonly ctrlKey = false;
+  readonly altKey = false;
+  readonly shiftKey = false;
+  readonly isComposing = false;
+  readonly repeat = false;
+  readonly keyCode = 91;
+
+  constructor(
+    type: 'keydown' | 'keyup',
+    readonly key: string,
+    private readonly trusted = true,
+  ) {
+    super(type);
   }
-  vi.stubGlobal('KeyboardEvent', Keyup);
-  const keyup = new Keyup() as unknown as Event;
-  page.get('keyup')?.(keyup);
-  hostOn(browser.connect(portName(A), popupUrl(A)), { released });
+
+  override get isTrusted(): boolean {
+    return this.trusted;
+  }
+
+  get code(): string {
+    return `${this.key}Left`;
+  }
+}
+
+// C-POP-07, K-01: a page received the Cmd keyup before the session listened; replay follows ready on that port.
+test.each(['popup', 'overlay'] as const)('hostLink.earlyRelease: a captured %s release follows ready', async (host) => {
+  const { stepped } = launch(host);
+  await settle();
+  vi.stubGlobal('KeyboardEvent', CapturedKey);
+  const target = new EventTarget();
+  const releases = noteReleases(target);
+  target.dispatchEvent(new CapturedKey('keyup', 'Meta'));
+  const worker = host === 'overlay' ? browser.connected[0] : browser.connect(portName(A), popupUrl(A));
+  if (!worker) throw new Error('no host port');
+  hostOn(worker, { releases });
   await settle();
   expect(stepped).toMatchObject([
     { kind: 'hostStatus', attempt: A, status: 'ready' },
     { kind: 'host', attempt: A, input: { kind: 'release', inferred: false } },
   ]);
+  target.dispatchEvent(new CapturedKey('keyup', 'Meta'));
+  expect(releases.take('Meta')).toBeNull();
+});
+
+test.each([
+  { name: 'a different modifier', keys: [new CapturedKey('keyup', 'Alt')] },
+  { name: 'an untrusted keyup', keys: [new CapturedKey('keyup', 'Meta', false)] },
+  { name: 'a newer press', keys: [new CapturedKey('keyup', 'Meta'), new CapturedKey('keydown', 'Meta')] },
+])('hostLink.earlyRelease: $name leaves the bound key held', async ({ keys }) => {
+  const { stepped } = launch('overlay');
+  await settle();
+  vi.stubGlobal('KeyboardEvent', CapturedKey);
+  const target = new EventTarget();
+  const releases = noteReleases(target);
+  for (const key of keys) target.dispatchEvent(key);
+  const worker = browser.connected[0];
+  if (!worker) throw new Error('no overlay port');
+  hostOn(worker, { releases });
+  await settle();
+  expect(stepped).toMatchObject([{ kind: 'hostStatus', attempt: A, status: 'ready' }]);
+});
+
+test('overlay.earlyRelease: a new evaluation replaces release notes and keeps one port listener', async ({
+  onTestFinished,
+}) => {
+  const received: (KeyboardEvent | null)[] = [];
+  vi.doMock('../../src/hosts/session/index.ts', () => ({
+    runSession: (_port: chrome.runtime.Port, host: Host) => {
+      received.push(host.releases?.take('Meta') ?? null);
+      return { end: () => undefined };
+    },
+  }));
+  onTestFinished(() => {
+    Reflect.deleteProperty(globalThis, Symbol.for('overlay.guard'));
+    vi.doUnmock('../../src/hosts/session/index.ts');
+    vi.resetModules();
+  });
+  async function evaluateOverlay(): Promise<void> {
+    vi.resetModules();
+    await import('../../src/hosts/overlay/index.ts');
+  }
+
+  const target = new EventTarget();
+  vi.stubGlobal('window', target);
+  await evaluateOverlay();
+  target.dispatchEvent(new CapturedKey('keyup', 'Meta')); // the retired injection never connected
+  await evaluateOverlay();
+  browser.connect(portName(A), extensionUrl(''));
+  await evaluateOverlay();
+  const fresh = new CapturedKey('keyup', 'Meta');
+  target.dispatchEvent(fresh);
+  browser.connect(portName('boot2:2:1'), extensionUrl(''));
+  expect(received).toEqual([null, fresh]);
 });
 
 // C-HOLD-28, C-POP-01, T-08: focus stayed in the frame after the overlay's take; it declines, never ready, and the

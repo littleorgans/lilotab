@@ -3,9 +3,10 @@
 // changes. Neither the hold cursor nor a search result is ever a gone row.
 
 import type { HostInput } from '../protocol/index.ts';
-import { rank } from '../ranking/index.ts';
-import { candidates, rowAt } from '../snapshot/index.ts';
+import { rank, titleKey, titleOrder } from '../ranking/index.ts';
+import { candidates, rowAt, rowOf, type Snapshot } from '../snapshot/index.ts';
 import { hasRow, listsRows, sameRow, type Cursor, type RowRef, type TabId } from '../types.ts';
+import { urlParts } from '../url.ts';
 import type { Interaction, SearchState } from './types.ts';
 
 const wrap = (n: number, delta: number, length: number): number => (((n + delta) % length) + length) % length;
@@ -19,14 +20,34 @@ function seek(at: number, delta: number, length: number, ok: (n: number) => bool
   return at;
 }
 
+// ---- the active order (C-HOLD-29, C-HOLD-31)
+
+// The row's title key, open or recently closed.
+function keyOf(s: Snapshot, ref: RowRef): string {
+  const row = rowOf(s, ref)?.row;
+  return row ? titleKey(row.title, urlParts(row.url).host) : '';
+}
+
+const sorted = (i: Pick<Interaction, 'snapshot' | 'sort'>, refs: readonly RowRef[]): readonly RowRef[] =>
+  i.sort === 'title' ? titleOrder(refs, (ref) => keyOf(i.snapshot, ref)) : refs;
+
+// A window's rows in the active order, gone ones included: the frozen tab order, or title order (T-81).
+export function shownOrder(i: Pick<Interaction, 'snapshot' | 'sort'>, window: number): number[] {
+  const refs = (i.snapshot.windows[window]?.rows ?? []).map((_, row) => ({ window, row }));
+  return sorted(i, refs).map((ref) => ref.row);
+}
+
 // ---- search results
 
-// Search over every listed row not gone, highlighting the given row when it is a result (T-18, T-31, T-55, T-75,
-// C-SRCH-08).
-export function searchOf(i: Pick<Interaction, 'snapshot' | 'gone'>, query: string, highlight: Cursor | null) {
-  const results = rank(
-    query,
-    candidates(i.snapshot).filter((c) => !hasRow(i.gone, c.ref)),
+// Search over every listed row not gone, in the active order, highlighting the given row when it is a result (T-18,
+// T-31, T-55, T-75, C-SRCH-08, C-SRCH-29).
+export function searchOf(i: Pick<Interaction, 'snapshot' | 'gone' | 'sort'>, query: string, highlight: Cursor | null) {
+  const results = sorted(
+    i,
+    rank(
+      query,
+      candidates(i.snapshot).filter((c) => !hasRow(i.gone, c.ref)),
+    ),
   );
   return { query, results, highlight: Math.max(0, highlight ? results.findIndex((r) => sameRow(r, highlight)) : 0) };
 }
@@ -42,11 +63,18 @@ const visible = (i: Interaction, window: number) => (row: number) => !hasRow(i.g
 // The source window's current row, which the close key never closes (C-SRCH-25).
 const home = (i: Interaction): Cursor => ({ window: 0, row: i.snapshot.windows[0]?.current ?? 0 });
 
+// The first row not gone from row, delta steps at a time along the window's active order, wrapping; row itself when
+// none is.
+function seekRow(i: Interaction, window: number, row: number, delta: number): number {
+  const order = shownOrder(i, window);
+  const shows = visible(i, window);
+  return order[seek(order.indexOf(row), delta, order.length, (n) => shows(order[n] ?? row))] ?? row;
+}
+
 // Within the shown window in its visible order; an arrow here ends history stepping for the hold (D6).
 const moveCursor = (i: Interaction, delta: number): Interaction => {
   const { window } = i.cursor;
-  const rows = i.snapshot.windows[window]?.rows.length ?? 1;
-  return { ...i, history: false, cursor: { window, row: seek(i.cursor.row, delta, rows, visible(i, window)) } };
+  return { ...i, history: false, cursor: { window, row: seekRow(i, window, i.cursor.row, delta) } };
 };
 
 // Shortcut presses: in history, one step along the global stack from the highlighted row, the shown window following
@@ -65,17 +93,35 @@ function stepWindow(i: Interaction, delta: number): Interaction {
   const { windows } = i.snapshot;
   const window = seek(i.cursor.window, delta, windows.length, (w) => listsRows(windows, i.gone, w));
   if (window === i.cursor.window) return i.history ? { ...i, history: false } : i;
-  const { current = 0, rows = [] } = windows[window] ?? {};
-  const row = visible(i, window)(current) ? current : seek(current, 1, rows.length, visible(i, window));
+  const current = windows[window]?.current ?? 0;
+  const row = visible(i, window)(current) ? current : seekRow(i, window, current, 1);
   return { ...i, history: false, cursor: { window, row } };
 }
 
-type HoldMove = Extract<HostInput, { kind: 'step' | 'move' | 'window' }>;
+type Jump = Extract<HostInput, { kind: 'jump' | 'page' }>;
 
-export const holdMove = (i: Interaction, input: HoldMove): Interaction => {
+// Home, End and the page keys: the first or last index, or at plus or minus rows, clamped to 0..last without
+// wrapping (T-77, T-84).
+const jumpIndex = (at: number, input: Jump, last: number): number =>
+  Math.max(0, Math.min(input.kind === 'page' ? at + input.delta * input.rows : input.to === 'first' ? 0 : last, last));
+
+// Within the shown window's rows not gone, in the active order; it ends history stepping as an arrow does (T-84).
+function jumpCursor(i: Interaction, input: Jump): Interaction {
+  const { window, row } = i.cursor;
+  const order = shownOrder(i, window).filter(visible(i, window));
+  const to = order[jumpIndex(order.indexOf(row), input, order.length - 1)] ?? row;
+  return { ...i, history: false, cursor: { window, row: to } };
+}
+
+type HoldMove = Extract<HostInput, { kind: 'step' | 'move' | 'window' | 'jump' | 'page' }>;
+const HOLD_MOVES: ReadonlySet<HostInput['kind']> = new Set(['step', 'move', 'window', 'jump', 'page']);
+export const isHoldMove = (input: HostInput): input is HoldMove => HOLD_MOVES.has(input.kind);
+
+export function holdMove(i: Interaction, input: HoldMove): Interaction {
   if (input.kind === 'step') return stepCursor(i, input.delta);
-  return input.kind === 'move' ? moveCursor(i, input.delta) : stepWindow(i, input.delta);
-};
+  if (input.kind === 'move') return moveCursor(i, input.delta);
+  return input.kind === 'window' ? stepWindow(i, input.delta) : jumpCursor(i, input);
+}
 
 // ---- search highlight: i itself with no results, else a new value (T-40, T-77)
 
@@ -93,9 +139,7 @@ export function searchMove(i: Interaction, input: SearchMove): Interaction {
   if (input.kind === 'step' || input.kind === 'move') return moveHighlight(i, input.delta);
   const { search } = i;
   if (!search?.results.length) return i;
-  const last = search.results.length - 1;
-  const to = input.kind === 'page' ? search.highlight + input.delta * input.rows : input.to === 'first' ? 0 : last;
-  return { ...i, search: { ...search, highlight: Math.max(0, Math.min(to, last)) } };
+  return { ...i, search: { ...search, highlight: jumpIndex(search.highlight, input, search.results.length - 1) } };
 }
 
 // Back to hold: the query goes and history stays (04 5 Steps); the highlighted tab stays when the shown window lists
@@ -116,11 +160,14 @@ export function closable(i: Interaction): { ref: RowRef; tabId: TabId } | null {
   return ref && row && row.tabId !== i.source.tabId ? { ref, tabId: row.tabId } : null;
 }
 
-// T-74: the next row of the shown window not gone, else the previous one, else window 0's current row.
+// T-74: the next row of the shown window not gone in the active order, else the previous one, else window 0's current
+// row.
 function pastGone(i: Interaction): Interaction {
   const { window, row } = i.cursor;
-  const shown = (i.snapshot.windows[window]?.rows ?? []).map((_, r) => r).filter(visible(i, window));
-  const next = shown.find((r) => r > row) ?? shown.findLast((r) => r < row);
+  const order = shownOrder(i, window);
+  const at = order.indexOf(row);
+  const shows = visible(i, window);
+  const next = order.slice(at + 1).find(shows) ?? order.slice(0, at).findLast(shows);
   return { ...i, cursor: next === undefined ? home(i) : { window, row: next } };
 }
 
@@ -128,6 +175,16 @@ function pastGone(i: Interaction): Interaction {
 function rerank(i: Interaction, search: SearchState): Interaction {
   const { query, results } = searchOf(i, search.query, null);
   return { ...i, search: { query, results, highlight: Math.max(0, Math.min(search.highlight, results.length - 1)) } };
+}
+
+// T-81 to T-83: the other order, which ends history stepping as an arrow does (C-WIN-06). Search ranks its query again
+// and highlights the first result (C-SRCH-29); hold highlights the shown window's first row in the new order
+// (C-HOLD-29).
+export function toggleSort(i: Interaction): Interaction {
+  const next: Interaction = { ...i, sort: i.sort === 'title' ? 'default' : 'title', history: false };
+  if (next.search) return { ...next, search: searchOf(next, next.search.query, null) };
+  const { window, row } = next.cursor;
+  return { ...next, cursor: { window, row: shownOrder(next, window).find(visible(next, window)) ?? row } };
 }
 
 // The only way a row goes: it leaves the list and the selection moves off it in the same value (T-74, T-75).

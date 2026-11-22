@@ -19,6 +19,13 @@ test('AC-07 tabs.privateGuard: a private window or tab never becomes a live fact
   expect(live.windows.map((w) => [w.windowId, w.tabs.map((t) => t.tabId)])).toEqual([[1, [11, 12]]]);
 });
 
+// C-HOLD-32: Chrome's ms since the epoch, as it reports it; none reads as null.
+test('AC-34 tabs.lastAccessed: a tab keeps the time it was last active, and a missing one is null', async () => {
+  browser.tabs = [tab(11, 1, { active: true, lastAccessed: 1_800_000_000_000 }), tab(12, 1)];
+  const live = await createTabs().liveFacts();
+  expect(live.windows[0]?.tabs.map((t) => t.lastAccessed)).toEqual([1_800_000_000_000, null]);
+});
+
 // C-PRIV-08: each row also acts on a normal object, which alone steps.
 test.each<{ name: string; act: (b: FakeBrowser) => void; steps: object[] }>([
   {

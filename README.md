@@ -2,7 +2,7 @@
 
 Switch Chrome tabs from the keyboard, the way Cmd+Tab switches apps. By littleorgans; see [lilotab.com](https://lilotab.com).
 
-Tap the shortcut to jump back to your last tab. Hold it to see every tab in the window, most recent first, and release to switch.
+By default, tap the shortcut to jump back to your last tab. Hold it to see every tab in the window, most recent first, and release to switch.
 
 ## Why Lilotab
 
@@ -35,12 +35,13 @@ Until the Store listing is live, build Lilotab from source. You need Node 24.22.
 ## How it works
 
 - **Tap** the shortcut to switch to your last used tab.
-- **Hold** the modifier to see the tabs in this window, most recent first. Press the shortcut letter again or use the arrow keys to move, then release to switch.
+- **Hold** the modifier to see the tabs in this window, most recent first. Press the shortcut letter again or use the arrow keys to move. With the default **On release** setting, release to switch. With **Keep list open**, moving the selection keeps the list open after release. Use Enter or click a row to switch, or press Esc to close.
 - **Windows:** Left and Right step through windows on a strip of window icons.
-- **Search:** press F while holding to search tabs across every window. Press the modifier and F again to drop the query and go back to the window list, then release to switch.
+- **Search:** press F while holding to search tabs across every window. Press the modifier and F again to drop the query and go back to the window list. The **On release** setting applies when you return to the list.
+- **Sort:** press S while holding to sort the list by title, and again to go back. In search, Cmd+S (Ctrl+S on Windows and Linux) sorts too.
 - **Toolbar:** click the toolbar icon to search all your tabs.
 
-**Settings:** quick tap (flip to last tab or open the list), quick tap scope, hold delay, tab order, where the list shows, recently closed tabs in search, a tab count badge, theme, text size and reduce motion, plus clearing history and restoring defaults.
+**Settings:** quick tap (flip to last tab or open the list), quick tap scope, hold delay, tab order, where the list shows, what happens on release, recently closed tabs in search, a tab count badge, theme, text size and reduce motion, plus clearing history and restoring defaults.
 
 ## Privacy
 

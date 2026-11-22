@@ -6,7 +6,7 @@
 import { readShortcut } from '../browser/commands.ts';
 import { isMac } from '../browser/platform.ts';
 import { MODIFIERS, keyText, parseBinding, type Binding } from '../core/index.ts';
-import { KEY_NAMES, SHORTCUT_TEXT } from '../strings.ts';
+import { KEY_NAMES, SHORTCUT_TEXT } from './strings.ts';
 import { el, hint, row } from './dom.ts';
 
 const SHORTCUTS_PAGE = 'chrome://extensions/shortcuts'; // C-SET-17: a page cannot link it, tabs.create can open it

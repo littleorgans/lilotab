@@ -3,11 +3,13 @@
 
 import { describe, expect, it } from 'vite-plus/test';
 import {
+  DEFAULTS,
   ICON_MAX,
   SITE_MAX,
   TITLE_MAX,
   URL_MAX,
   admit,
+  buildSnapshot,
   iconSrc,
   listView,
   parseBinding,
@@ -19,7 +21,8 @@ import {
   shapeOf,
   type Snapshot,
 } from '../src/core/index.ts';
-import { CTRL_SHIFT_E, binding, row, startView } from './host-fixtures.ts';
+import { history, live, win } from './data-fixtures.ts';
+import { CTRL_SHIFT_E, binding, holdFrame, row, searchFrame, startView } from './host-fixtures.ts';
 
 const ATTEMPT = 'boot1:1:1';
 const PNG = 'data:image/png;base64,iVBORw0KGgo=';
@@ -89,9 +92,11 @@ describe('TB-11 protocol.parse', () => {
       url: `https://${'h'.repeat(SITE_MAX)}.example.com/`,
       pinned: false,
       audible: true,
+      sleeping: false,
       useRank: 0,
       barIndex: 0,
       iconKey: 'k',
+      lastAccessed: null,
     };
     const snapshot: Snapshot = {
       source: { tabId: 1, windowId: 1 },
@@ -100,9 +105,26 @@ describe('TB-11 protocol.parse', () => {
       initial: { window: 0, row: 0 },
       stack: null,
       closed: [],
+      wall: 0,
+      tabOrder: 'recent',
     };
     const start = startView({ view: listView(snapshot) });
     expect(parseWorkerToHost({ t: 'start', start, wake: null }, null)).toEqual({ t: 'start', start, wake: null });
+  });
+
+  it('C-WIN-01 C-WIN-14: a window with no eligible tabs leaves a valid start message', () => {
+    const facts = live(win(1, 1, 1), { windowId: 2, tabs: [] }, win(3, 3, 3));
+    const snapshot = buildSnapshot(history(facts), facts, DEFAULTS, { tabId: 1, windowId: 1 }, [], 0);
+    if (!snapshot) throw new Error('no snapshot');
+
+    const start = startView({
+      view: listView(snapshot),
+      frame: holdFrame({ visible: false, ...snapshot.initial }),
+    });
+    const message = { t: 'start', start, wake: null };
+    expect(parseWorkerToHost(message, null)).toEqual(message);
+    expect(start.view.windows.map(({ rows }) => rows.map(({ title }) => title))).toEqual([['Tab 1'], ['Tab 3']]);
+    expect(snapshot.initial).toEqual({ window: 1, row: 0 });
   });
 
   // Planned rows (build spec 5 item 8): C-HOLD-25 audible, C-SET-19 quickTap, C-TAP-10 open.
@@ -117,8 +139,22 @@ describe('TB-11 protocol.parse', () => {
       start: startView({ view: { ...startView().view, closed: [row('Closed')] } }),
     },
     {
+      name: 'C-HOLD-32 to C-HOLD-34: a row with noise, an age and a duplicate group',
+      start: startView({
+        view: {
+          windows: [
+            {
+              current: 0,
+              rows: [row('(3) Inbox - Gmail', { noise: { lead: 4, tail: 9 }, age: { n: 4, unit: 'w' }, dup: 0 })],
+            },
+          ],
+          closed: [],
+        },
+      }),
+    },
+    {
       name: 'C-TAP-10: an open hold frame',
-      start: startView({ frame: { mode: 'hold', visible: true, open: true, window: 0, row: 0, gone: [], copy: null } }),
+      start: startView({ frame: holdFrame({ open: true }) }),
     },
   ])('a start view with $name parses', ({ start }) => {
     expect(parseWorkerToHost({ t: 'start', start, wake: null }, null)).toEqual({ t: 'start', start, wake: null });
@@ -126,8 +162,8 @@ describe('TB-11 protocol.parse', () => {
 
   const { audible: _audible, ...rowWithoutAudible } = row('A');
   const { quickTap: _quickTap, ...startWithoutQuickTap } = startView();
-  const holdFrameWithoutOpen = { mode: 'hold', visible: true, window: 0, row: 0, gone: [], copy: null };
-  const searchFrame = { mode: 'search', query: '', results: [], highlight: 0, copy: null };
+  const { open: _open, ...holdFrameWithoutOpen } = holdFrame();
+  const search = searchFrame();
 
   it.each([
     {
@@ -145,6 +181,14 @@ describe('TB-11 protocol.parse', () => {
       name: 'C-SRCH-27: a view without closed',
       start: { ...startView(), view: { windows: startView().view.windows } },
     },
+    ...[
+      { name: 'C-HOLD-34: noise past the title', over: { noise: { lead: 0, tail: 2 } } },
+      { name: 'C-HOLD-32: an unknown age unit', over: { age: { n: 1, unit: 's' } } },
+      { name: 'C-HOLD-33: a negative duplicate group', over: { dup: -1 } },
+    ].map(({ name, over }) => ({
+      name,
+      start: { ...startView(), view: { windows: [{ current: 0, rows: [{ ...row('A'), ...over }] }], closed: [] } },
+    })),
     { name: 'C-SET-19: no quickTap', start: startWithoutQuickTap },
     { name: "C-SET-19: unknown quickTap 'tap'", start: { ...startView(), quickTap: 'tap' } },
     { name: 'C-TAP-10: a hold frame without open', start: { ...startView(), frame: holdFrameWithoutOpen } },
@@ -163,7 +207,7 @@ describe('TB-11 protocol.parse', () => {
       name: 'C-HOLD-06: a hold cursor past the last row (05-events 4.5)',
       frame: { ...holdFrameWithoutOpen, open: false, row: SHAPE[0] },
     },
-    { name: 'C-TAP-10: open on a search frame', frame: { ...searchFrame, open: false } },
+    { name: 'C-TAP-10: open on a search frame', frame: { ...search, open: false } },
     {
       name: 'C-SET-19: quickTap on a frame',
       frame: { ...holdFrameWithoutOpen, open: false, quickTap: 'flip' },
@@ -177,6 +221,7 @@ describe('TB-11 protocol.parse', () => {
     { name: 'K-31: jump last', input: { kind: 'jump', to: 'last' } },
     { name: 'K-32: page down by 500 rows', input: { kind: 'page', delta: 1, rows: 500 } },
     { name: 'K-33: close', input: { kind: 'close' } },
+    { name: 'K-35 to K-37: sort', input: { kind: 'sort' } },
   ])('parses a host input: $name', ({ input }) => {
     expect(parseHostToWorker({ t: 'input', input })).toEqual({ t: 'input', input });
   });
@@ -193,13 +238,13 @@ describe('TB-11 protocol.parse', () => {
 
   const copy = (url: string, title = 'T') => ({ title, url });
   const { gone: _gone, ...holdWithoutGone } = { ...holdFrameWithoutOpen, open: false };
-  const { copy: _copy, ...searchWithoutCopy } = searchFrame;
+  const { copy: _copy, ...searchWithoutCopy } = search;
   it.each([
     {
       name: 'C-HOLD-14: a hold frame with a gone row',
       frame: { ...holdFrameWithoutOpen, open: false, gone: [{ window: 0, row: 1 }] },
     },
-    { name: 'C-SRCH-26: an address of URL_MAX', frame: { ...searchFrame, copy: copy('u'.repeat(URL_MAX)) } },
+    { name: 'C-SRCH-26: an address of URL_MAX', frame: { ...search, copy: copy('u'.repeat(URL_MAX)) } },
   ])('parses a frame: $name', ({ frame }) => {
     expect(parseWorkerToHost({ t: 'frame', frame }, SHAPE)).toEqual({ t: 'frame', frame });
   });
@@ -211,12 +256,14 @@ describe('TB-11 protocol.parse', () => {
     },
     { name: 'C-HOLD-14: a hold frame without gone', frame: holdWithoutGone },
     { name: 'C-SRCH-26: a search frame without copy', frame: searchWithoutCopy },
-    { name: 'C-SRCH-26: an address past URL_MAX', frame: { ...searchFrame, copy: copy('u'.repeat(URL_MAX + 1)) } },
+    { name: 'C-SRCH-26: an address past URL_MAX', frame: { ...search, copy: copy('u'.repeat(URL_MAX + 1)) } },
     {
       name: 'C-SRCH-26: a title past TITLE_MAX',
-      frame: { ...searchFrame, copy: copy('u', 't'.repeat(TITLE_MAX + 1)) },
+      frame: { ...search, copy: copy('u', 't'.repeat(TITLE_MAX + 1)) },
     },
-    { name: 'C-SRCH-26: copy with an unknown field', frame: { ...searchFrame, copy: { ...copy('u'), tabId: 1 } } },
+    { name: 'C-SRCH-26: copy with an unknown field', frame: { ...search, copy: { ...copy('u'), tabId: 1 } } },
+    { name: 'C-HOLD-30: an unknown sort name', frame: { ...holdFrame(), sort: 'alpha' } },
+    { name: 'C-HOLD-29: a hold order that is no permutation', frame: holdFrame({ order: [0, 0, 1] }) },
   ])('rejects a frame: $name', ({ frame }) => {
     expect(parseWorkerToHost({ t: 'frame', frame }, SHAPE)).toBeNull();
   });
@@ -224,17 +271,17 @@ describe('TB-11 protocol.parse', () => {
   // One open window of three rows, then the closed window, window 1, with one row (05-events 4.9).
   const WITH_CLOSED = shapeOf({ ...startView().view, closed: [row('Closed')] });
   const closedRef = { window: 1, row: 0 };
-  const holdFrame = { ...holdFrameWithoutOpen, open: false };
   it.each([
-    { name: 'a search result', raw: { t: 'frame', frame: { ...searchFrame, results: [closedRef] } }, parses: true },
+    { name: 'a search result', raw: { t: 'frame', frame: { ...search, results: [closedRef] } }, parses: true },
     { name: 'an icon patch', raw: { t: 'icons', icons: [{ w: 1, r: 0, src: PNG }] }, parses: true },
     {
       name: 'a search result past its rows',
-      raw: { t: 'frame', frame: { ...searchFrame, results: [{ window: 1, row: 1 }] } },
+      raw: { t: 'frame', frame: { ...search, results: [{ window: 1, row: 1 }] } },
       parses: false,
     },
-    { name: 'a hold cursor', raw: { t: 'frame', frame: { ...holdFrame, window: 1, row: 0 } }, parses: false },
-    { name: 'a gone row', raw: { t: 'frame', frame: { ...holdFrame, gone: [closedRef] } }, parses: false },
+    { name: 'a hold cursor', raw: { t: 'frame', frame: holdFrame({ window: 1, row: 0 }) }, parses: false },
+    { name: 'a gone row', raw: { t: 'frame', frame: holdFrame({ gone: [closedRef] }) }, parses: false },
+    { name: 'a search gone row', raw: { t: 'frame', frame: searchFrame({ gone: [closedRef] }) }, parses: false },
   ])('C-SRCH-27: the closed window in $name', ({ raw, parses }) => {
     expect(parseWorkerToHost(raw, WITH_CLOSED)).toEqual(parses ? raw : null);
   });

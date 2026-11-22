@@ -10,6 +10,7 @@ import type {
   ClosedTab,
   Cursor,
   Diagnostic,
+  EpochMs,
   InteractionId,
   LiveFacts,
   Millis,
@@ -35,10 +36,28 @@ export type HostStatus = 'ready' | 'declined' | 'failed' | 'closed';
 
 type Closed = readonly ClosedTab[]; // read at each press (C-SRCH-27)
 
+// wall: each press's one wall clock stamp, for display ages only (05-events 2.2).
+
 export type CoreEvent =
-  | { kind: 'command'; at: Millis; source: SourceTab; binding: Binding; live: LiveFacts; closed: Closed }
-  | { kind: 'toolbarClicked'; at: Millis; source: SourceTab; binding: Binding | null; live: LiveFacts; closed: Closed }
-  | { kind: 'searchCommand'; at: Millis; source: SourceTab; binding: Binding | null; live: LiveFacts; closed: Closed }
+  | { kind: 'command'; at: Millis; wall: EpochMs; source: SourceTab; binding: Binding; live: LiveFacts; closed: Closed }
+  | {
+      kind: 'toolbarClicked';
+      at: Millis;
+      wall: EpochMs;
+      source: SourceTab;
+      binding: Binding | null;
+      live: LiveFacts;
+      closed: Closed;
+    }
+  | {
+      kind: 'searchCommand';
+      at: Millis;
+      wall: EpochMs;
+      source: SourceTab;
+      binding: Binding | null;
+      live: LiveFacts;
+      closed: Closed;
+    }
   | { kind: 'tabActivated'; at: Millis; tabId: TabId; windowId: WindowId }
   | { kind: 'windowCreated'; at: Millis; windowId: WindowId; normal: boolean }
   | { kind: 'windowFocused'; at: Millis; windowId: WindowId | null } // null: WINDOW_ID_NONE; the core classifies the rest
@@ -86,6 +105,7 @@ export interface Interaction {
   binding: Binding | null; // null only for search entry without a usable shortcut (C-POP-09)
   look: Look; // frozen at the press (C-SET-12)
   quickTap: Settings['quickTap']; // frozen at the press (C-SET-12, C-SET-19)
+  onRelease: Settings['onRelease']; // frozen at the press (C-SET-12, C-SET-30)
   snapshot: Snapshot; // frozen at the press (C-HOLD-14)
   state: InteractionState;
   attempt: { id: AttemptId; host: 'overlay' | 'popup' }; // the one active host attempt
@@ -94,8 +114,9 @@ export interface Interaction {
   cursor: Cursor; // hold mode cursor; starts at snapshot.initial
   history: boolean; // steps walk snapshot.stack; the first arrow in a hold ends it (D6)
   search: SearchState | null;
-  open: boolean; // holding.open, the open list (T-68); false at the press, survives a search latch
+  open: boolean; // holding.open, the open list (T-68, T-80); false at the press, survives a search latch
   gone: readonly RowRef[]; // rows closed with the close key (T-74, T-75, C-SRCH-25); never the snapshot
+  sort: 'default' | 'title'; // the active order, default at the press; it carries between hold and search (C-HOLD-29)
 }
 
 export interface Model {

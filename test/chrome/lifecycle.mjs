@@ -1,5 +1,6 @@
 // AC-03, AC-09, AC-20: install and reload (07-tests 2.2).
 import path from 'node:path';
+import { SESSION_KEY } from '../../src/core/recents/index.ts';
 import { WELCOME_PAGE } from '../../src/worker/names.ts';
 import { Chrome } from './chrome.mjs';
 import { Evidence, pause, scrub, until } from './support.mjs';
@@ -16,7 +17,7 @@ class FreshInstall extends Chrome {
     this.welcomeAtInstall = welcome();
     return super.fixtures();
   }
-  // Empty query toolbar search rows: recent first, then unused by window and tab bar order (C-SRCH-08).
+  // Empty query toolbar search rows: the source tab, then by last active time (C-SRCH-08).
   async searchOrder() {
     await this.toolbar();
     const target = await until(() => this.popupTarget(), 4000);
@@ -45,7 +46,11 @@ function lifecycleOnce(c, e) {
       const failed = (err) => ({ error: scrub(err.message) });
       try {
         await fresh.start();
-        seen = { welcomeAtInstall: fresh.welcomeAtInstall, source: fresh.source.id };
+        seen = {
+          welcomeAtInstall: fresh.welcomeAtInstall,
+          source: fresh.source.id,
+          unused: [fresh.audio.id, fresh.other.id],
+        };
         await fresh.focus(fresh.audio.id);
         await fresh.focus(fresh.other.id);
         await fresh.focus();
@@ -75,6 +80,10 @@ function lifecycleOnce(c, e) {
         await pause(700);
         seen.welcomeAfterReload = fresh.browser.targets().filter((t) => t.url().endsWith(WELCOME_PAGE)).length;
         seen.after = await fresh.searchOrder().catch(failed);
+        // The stored use order: tab ids with a number, one per window's active tab after the reload (C-REC-09).
+        seen.used = await fresh
+          .workerEval(`chrome.storage.session.get('${SESSION_KEY}').then((x)=>x['${SESSION_KEY}'].tabs.map((t)=>t[0]))`)
+          .catch(failed);
       } finally {
         clean = await fresh.stop();
       }
@@ -98,18 +107,22 @@ export function lifecycleScenarios(c, e, add) {
   );
   add(
     'AC-09-reset-on-reload',
-    "After an extension reload the recent order is empty and each window's active tab is seeded: the two never active tabs follow all 14 in tab bar order (C-DATA-03, C-REC-09)",
+    "After an extension reload the use order holds only each window's active tab, yet Recent still follows each tab's last active time: the order is unchanged, and Other and Audio follow the source tab (C-DATA-03, C-REC-09, C-SRCH-08)",
     async () => {
-      const { before, after } = await lifecycle();
+      const { before, after, used, unused } = await lifecycle();
       if (before.error || after.error) throw new Error(`Toolbar search order unread: ${before.error ?? after.error}`);
-      // Audio and Other are the only tabs never active at the reload: unused, they follow every seeded tab in tab
-      // bar order (Audio is pinned first), whereas before it Other, used last, came first.
+      if (used.error) throw new Error(`Use order unread: ${used.error}`);
+      // Source, Audio and Other were last made active in the order Audio, Other, Source. Chrome keeps those times over
+      // the reload, whereas the use order restarts with only each window's active tab, so Other and Audio would follow
+      // every seeded tab if use decided.
       return {
         pass:
-          before.indexOf('H1 Other') < before.indexOf('H1 Audio') &&
+          used.length === 14 &&
+          unused.every((id) => !used.includes(id)) &&
           after.length === 16 &&
-          after.slice(-2).join() === 'H1 Audio,H1 Other',
-        measured: { before, after },
+          after.slice(0, 3).join() === 'H1 Source,H1 Other,H1 Audio' &&
+          after.join() === before.join(),
+        measured: { before, after, used },
       };
     },
   );

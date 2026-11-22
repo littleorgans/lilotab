@@ -1,31 +1,15 @@
 // Copy from the list, and the notice when it could not (C-SRCH-26).
 
 import { LIST_TEXT } from '../../strings.ts';
-import { el } from './paint.ts';
+import type { Notice } from './notice.ts';
 
 export interface Clipboard {
-  readonly notice: HTMLElement;
   // Copies in the trusted key handler, or says it could not when text is null or the browser refuses.
   copy(text: string | null): void;
-  dispose(): void;
 }
 
-const NOTICE_MS = 2_000; // "Could not copy" (C-SRCH-26)
-
-// box holds the temporary textarea, inside root.
-export function createClipboard(root: Document | ShadowRoot, box: HTMLElement | ShadowRoot): Clipboard {
-  const notice = el('div', 'notice');
-  notice.setAttribute('role', 'status');
-  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
-
-  function say(text: string): void {
-    notice.textContent = text;
-    clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => {
-      notice.textContent = '';
-    }, NOTICE_MS);
-  }
-
+// box holds the temporary textarea, inside root; notice says "Could not copy".
+export function createClipboard(root: Document | ShadowRoot, box: HTMLElement | ShadowRoot, notice: Notice): Clipboard {
   // Synchronous copy with no clipboard permission (probe p-clip): a temporary textarea inside the root, so page script
   // never sees the text (C-HOLD-20); then focus and selection go back where they were, the page's own in hold.
   function copyText(text: string): boolean {
@@ -54,12 +38,8 @@ export function createClipboard(root: Document | ShadowRoot, box: HTMLElement | 
   }
 
   return {
-    notice,
     copy(text) {
-      if (text === null || !copyText(text)) say(LIST_TEXT.notCopied);
-    },
-    dispose() {
-      clearTimeout(noticeTimer);
+      if (text === null || !copyText(text)) notice.say(LIST_TEXT.notCopied);
     },
   };
 }

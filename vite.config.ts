@@ -61,7 +61,7 @@ export default defineConfig({
     env: {
       builtin: true,
     },
-    ignorePatterns: ['dist', 'dist-timing', 'release', 'node_modules'],
+    ignorePatterns: ['dist', 'dist-timing', 'release', 'node_modules', '.bench'],
     rules: {
       'constructor-super': 'error',
       'for-direction': 'error',
@@ -253,7 +253,7 @@ export default defineConfig({
       {
         // The headless Chrome harness is plain JS run by Node that also ships functions into browser worlds over CDP.
         // These rules need type annotations, or forbid the probe's wrapping of native prototype methods.
-        files: ['test/chrome/**'],
+        files: ['test/chrome/**', 'test/bench/**/*.mjs'],
         env: { node: true, browser: true },
         rules: {
           'typescript/no-unsafe-argument': 'off',
@@ -313,7 +313,7 @@ export default defineConfig({
     singleQuote: true,
     printWidth: 120,
     sortPackageJson: false,
-    ignorePatterns: ['dist', 'dist-timing', 'release', 'package-lock.json', 'docs/design', '.lilo'],
+    ignorePatterns: ['dist', 'dist-timing', 'release', 'package-lock.json', 'docs/design', '.lilo', '.bench'],
   },
   // lazyPlugins skips the plugins while vp check, lint and fmt read this config; under exactOptionalPropertyTypes
   // its undefined return needs a fallback.

@@ -1,6 +1,8 @@
 // Tabs and windows: browser events to core events, live facts, activation, private object guard (03-components 3.2).
 
+import { BENCH_MARK, TAP_MARK, benchMark } from '../../../browser/timing.ts';
 import type { ActivationResult, LiveFacts, LiveTab, TabsAdapter } from '../../../core/index.ts';
+import { epochOf } from '../clock/index.ts';
 import { iconKeyOf } from '../icons/index.ts';
 
 // The one private object guard: applied to every Tab or Window before it becomes a fact (C-PRIV-08).
@@ -13,8 +15,10 @@ function liveTab(t: chrome.tabs.Tab & { id: number }): LiveTab {
     url: t.url ?? t.pendingUrl ?? '',
     pinned: t.pinned,
     audible: t.audible ?? false,
+    sleeping: t.discarded,
     active: t.active,
     iconKey: iconKeyOf(t),
+    lastAccessed: epochOf(t.lastAccessed),
   };
 }
 
@@ -42,11 +46,14 @@ async function activation(tabId: number, windowId: number, focusWindow: boolean)
   const tab = await chrome.tabs.get(tabId).catch(() => null);
   if (!tab || isPrivate(tab) || tab.windowId !== windowId) return 'gone';
   try {
+    if (import.meta.env.MODE === 'timing') benchMark(TAP_MARK.tabUpdate);
     await chrome.tabs.update(tabId, { active: true });
+    if (import.meta.env.MODE === 'timing') benchMark(TAP_MARK.tabUpdated);
   } catch {
     return 'rejected';
   }
   if (!focusWindow) return 'done';
+  if (import.meta.env.MODE === 'timing') benchMark(TAP_MARK.focusRequested);
   return chrome.windows.update(windowId, { focused: true }).then(
     () => 'done',
     () => 'focusFailed',
@@ -58,7 +65,9 @@ export function createTabs(): TabsAdapter {
   return {
     liveFacts,
     activate(op, target, focusWindow) {
+      if (import.meta.env.MODE === 'timing') benchMark(TAP_MARK.switchRequested);
       void activation(target.tabId, target.windowId, focusWindow).then((result) => {
+        if (import.meta.env.MODE === 'timing') benchMark(TAP_MARK.switchSettled);
         results?.((at) => ({ kind: 'activated', at, op, target, result }));
       });
     },
@@ -69,6 +78,7 @@ export function createTabs(): TabsAdapter {
     onEvent(sink) {
       results = sink;
       chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+        if (import.meta.env.MODE === 'timing') benchMark(BENCH_MARK.activated);
         sink((at) => ({ kind: 'tabActivated', at, tabId, windowId }));
       });
       chrome.tabs.onRemoved.addListener((tabId, { windowId, isWindowClosing }) => {

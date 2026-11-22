@@ -14,6 +14,10 @@ type Call =
   | 'windows.getAll'
   | 'windows.update'
   | 'tabs.update'
+  | 'storage.session.get'
+  | 'storage.session.set'
+  | 'storage.local.get'
+  | 'storage.local.set'
   | 'action.setPopup'
   | 'action.openPopup'
   | 'scripting.executeScript';
@@ -67,10 +71,13 @@ export interface FakeWindow {
   incognito: boolean;
 }
 
-export interface FakeTab extends Omit<LiveTab, 'tabId' | 'iconKey'> {
+export interface FakeTab extends Omit<LiveTab, 'tabId' | 'iconKey' | 'lastAccessed'> {
   id: number;
   windowId: number;
   incognito: boolean;
+  autoDiscardable: boolean;
+  discarded: boolean;
+  lastAccessed?: number; // Tab.lastAccessed, in ms since the epoch
 }
 
 const EXTENSION_ID = 'lilotabfakeextensionid';
@@ -79,8 +86,8 @@ export const extensionUrl = (path: string): string => `chrome-extension://${EXTE
 export const popupUrl = (attempt: string): string => `${extensionUrl(POPUP_PAGE)}#${attempt}`;
 
 export const tab = (id: number, windowId: number, more: Partial<FakeTab> = {}): FakeTab => {
-  const { tabId: _tabId, iconKey: _iconKey, ...fields } = liveTab(id);
-  return { ...fields, id, windowId, incognito: false, ...more };
+  const { tabId: _tabId, iconKey: _iconKey, lastAccessed: _lastAccessed, ...fields } = liveTab(id);
+  return { ...fields, id, windowId, incognito: false, autoDiscardable: true, discarded: false, ...more };
 };
 
 export const win = (id: number, more: Partial<FakeWindow> = {}): FakeWindow => ({
@@ -101,7 +108,9 @@ function createBrowser() {
     popups: new Map<number, string>(), // each tab's action popup
     opened: [] as string[], // popup pages action.openPopup opened
     connected: [] as FakePort[], // ports the worker opened with tabs.connect
-    log: [] as string[], // activation writes in order
+    log: [] as string[], // tab and window updates in order
+    session: {} as Record<string, unknown>,
+    local: {} as Record<string, unknown>,
     badge: { text: '', background: '', color: '' }, // the toolbar icon's badge
     // The browser's toolbar click: the tab's popup if one is set, else action.onClicked (C-POP-09).
     click(tabId: number): void {
@@ -144,6 +153,14 @@ function createBrowser() {
     if (browser.failing.has(name)) throw new Error(`${name} failed`);
     return act();
   }
+
+  const storageArea = (area: 'session' | 'local') => ({
+    get: (key: string) => call(`storage.${area}.get`, () => ({ [key]: structuredClone(browser[area][key]) })),
+    set: (items: Record<string, unknown>) =>
+      call(`storage.${area}.set`, () => {
+        Object.assign(browser[area], structuredClone(items));
+      }),
+  });
 
   const api = {
     commands: {
@@ -189,13 +206,22 @@ function createBrowser() {
       executeScript: ({ target }: { target: { tabId: number } }) =>
         call('scripting.executeScript', () => [{ frameId: 0, documentId: `doc-${String(target.tabId)}` }]),
     },
+    storage: { session: storageArea('session'), local: storageArea('local') },
     tabs: {
       get: (tabId: number) => Promise.resolve().then(() => ({ ...find(tabId) })),
-      update: (tabId: number, { active }: { active: boolean }) =>
+      update: (tabId: number, { active, autoDiscardable }: { active?: boolean; autoDiscardable?: boolean }) =>
         call('tabs.update', () => {
           const target = find(tabId);
-          for (const t of browser.tabs) if (t.windowId === target.windowId) t.active = t.id === tabId && active;
-          browser.log.push(`activate ${String(tabId)}`);
+          if (active !== undefined) {
+            for (const t of browser.tabs) if (t.windowId === target.windowId) t.active = t.id === tabId && active;
+            if (active) target.discarded = false;
+            browser.log.push(`activate ${String(tabId)}`);
+          }
+          if (autoDiscardable !== undefined) {
+            target.autoDiscardable = autoDiscardable;
+            browser.log.push(`autoDiscardable ${String(tabId)} ${String(autoDiscardable)}`);
+          }
+          return { ...target };
         }),
       connect: (_tabId: number, { name }: { name: string }) => {
         const port = createPort(name);
@@ -211,6 +237,11 @@ function createBrowser() {
     },
     windows: {
       WINDOW_ID_NONE: -1,
+      getLastFocused: ({ windowTypes }: { windowTypes?: string[] } = {}) => {
+        const windows = browser.windows.filter((w) => !windowTypes || windowTypes.includes(w.type));
+        const last = windows.find((w) => w.focused) ?? windows[0];
+        return last ? Promise.resolve({ ...last }) : Promise.reject(new Error('No window'));
+      },
       getAll: ({ windowTypes }: { windowTypes: string[] }) =>
         call('windows.getAll', () =>
           browser.windows

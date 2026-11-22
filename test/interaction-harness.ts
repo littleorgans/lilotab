@@ -5,6 +5,7 @@
 import { expect } from 'vite-plus/test';
 import {
   init,
+  sameRow,
   step,
   type ClosedTab,
   type CoreEvent,
@@ -15,6 +16,7 @@ import {
   type LiveFacts,
   type Model,
   type Settings,
+  type SortName,
   type TabId,
   type WindowId,
 } from '../src/core/index.ts';
@@ -24,6 +26,7 @@ import { CMD_E } from './host-fixtures.ts';
 // ---- fixture
 
 const T0 = 1_000; // the press time; every row's offsets count from it
+const WALL = 1_800_000_000_000; // the press's wall stamp (05-events 2.2)
 
 // Stored settings under every row: rows assume This window unless they set a scope (C-SET-03).
 export const STORED = { version: 1, quickScope: 'window' } as const;
@@ -114,6 +117,7 @@ export const press =
   ({ live }) => ({
     kind: 'command',
     at: T0 + at,
+    wall: WALL,
     source: { tabId, windowId: windowOfTab(tabId), url: urlOf(tabId) },
     binding: CMD_E,
     live,
@@ -121,12 +125,20 @@ export const press =
   });
 // One recently closed tab, read at a search entry press; with two listed windows its row is { window: 2, row: 0 }.
 export const CLOSED: readonly ClosedTab[] = [
-  { sessionId: 's1', title: 'Omega', url: 'https://omega.example/', iconKey: null },
+  { sessionId: 's1', title: 'Omega', url: 'https://omega.example/', iconKey: null, closedAt: null },
 ];
 const searchPress =
   (kind: 'toolbarClicked' | 'searchCommand') =>
   (at: number, { url = urlOf(11), closed = [] as readonly ClosedTab[] } = {}): Ev =>
-  ({ live }) => ({ kind, at: T0 + at, source: { tabId: 11, windowId: 1, url }, binding: CMD_E, live, closed });
+  ({ live }) => ({
+    kind,
+    at: T0 + at,
+    wall: WALL,
+    source: { tabId: 11, windowId: 1, url },
+    binding: CMD_E,
+    live,
+    closed,
+  });
 export const toolbar = searchPress('toolbarClicked');
 export const searchKey = searchPress('searchCommand'); // the Search tabs command (C-KEY-12)
 export const status =
@@ -152,6 +164,7 @@ export const ping = (at: number) => host(at, { kind: 'ping' });
 export const activity = (at: number) => host(at, { kind: 'activity' });
 export const esc = (at: number) => host(at, { kind: 'cancel', cause: 'key' });
 export const close = (at: number) => host(at, { kind: 'close' });
+export const sort = (at: number) => host(at, { kind: 'sort' });
 export const jump = (at: number, to: 'first' | 'last') => host(at, { kind: 'jump', to });
 export const page = (at: number, delta: 1 | -1, rows: number) => host(at, { kind: 'page', delta, rows });
 export const pick =
@@ -213,7 +226,7 @@ const interactionOf = (attempt: string) => attempt.slice(0, attempt.lastIndexOf(
 
 function checkInvariants(trace: readonly StepRecord[], start: Model, live: LiveFacts, events: readonly Ev[]): void {
   const closes = new Map<string, number>(); // attempt -> closeHost count
-  const frozen = new Map<string, Pick<Interaction, 'snapshot' | 'binding' | 'look' | 'quickTap'>>();
+  const frozen = new Map<string, Pick<Interaction, 'snapshot' | 'binding' | 'look' | 'quickTap' | 'onRelease'>>();
   const pressAt = new Map<string, number>();
   const activates = new Map<string, number>();
   const ended = new Set<string>();
@@ -233,9 +246,10 @@ function checkInvariants(trace: readonly StepRecord[], start: Model, live: LiveF
     const i = after.interaction;
     if (i) {
       if (!pressAt.has(i.id)) pressAt.set(i.id, event.at);
-      // 2: snapshot, binding, look and quickTap never change after the press
+      // 2: snapshot, binding, look, quickTap and onRelease never change after the press
       const seen = frozen.get(i.id);
-      const now = { snapshot: i.snapshot, binding: i.binding, look: i.look, quickTap: i.quickTap };
+      const { snapshot, binding, look, quickTap, onRelease } = i;
+      const now = { snapshot, binding, look, quickTap, onRelease };
       if (seen) expect(now, `inv 2 after ${label}`).toStrictEqual(seen);
       else frozen.set(i.id, now);
       // 7: a ready host or an exit by the press plus 500 ms
@@ -309,6 +323,9 @@ export interface Outcome {
   closed?: TabId | null; // the tab the last event closed with the close key
   restored?: string | null; // the session the last event reopened (T-78)
   host?: 'overlay' | 'popup' | undefined; // the live interaction's host attempt
+  // the latest visible frame's order name and tabs in shown order: the hold window less gone rows, or
+  // the search results (C-HOLD-29, C-SRCH-29)
+  sorted?: { sort: SortName; tabs: (TabId | undefined)[] } | undefined;
 }
 
 export const switchTo = (tab: TabId, focusWindow = false) => ({ tab, focusWindow });
@@ -316,15 +333,35 @@ export const switchTo = (tab: TabId, focusWindow = false) => ({ tab, focusWindow
 const stateOf = (i: Interaction | null): State =>
   !i ? 'idle' : i.state === 'holding' && i.open ? 'holding.open' : i.state;
 
-function shownOf(trace: readonly StepRecord[]): TabId | undefined {
+// The live interaction and its latest rendered frame.
+function lastFrame(trace: readonly StepRecord[]) {
   const i = trace.at(-1)?.after.interaction;
   if (!i) return undefined;
   const frames = trace.flatMap((s) => s.effects).filter((e) => e.kind === 'render' && e.attempt === i.attempt.id);
   const last = frames.at(-1);
-  if (last?.kind !== 'render') return undefined;
-  const f = last.frame;
-  const ref = f.mode === 'search' ? f.results[f.highlight] : f;
-  return ref && i.snapshot.windows[ref.window]?.rows[ref.row]?.tabId;
+  return last?.kind === 'render' ? { i, f: last.frame } : undefined;
+}
+
+const tabOf = (i: Interaction, ref: { window: number; row: number } | undefined) =>
+  ref && i.snapshot.windows[ref.window]?.rows[ref.row]?.tabId;
+
+function shownOf(trace: readonly StepRecord[]): TabId | undefined {
+  const last = lastFrame(trace);
+  if (!last) return undefined;
+  const { i, f } = last;
+  return tabOf(i, f.mode === 'search' ? f.results[f.highlight] : f);
+}
+
+function sortedOf(trace: readonly StepRecord[]): Outcome['sorted'] {
+  const last = lastFrame(trace);
+  if (!last) return undefined;
+  const { i, f } = last;
+  const rows = f.mode === 'hold' ? (f.order ?? i.snapshot.windows[f.window]?.rows.map((_, r) => r) ?? []) : [];
+  const refs =
+    f.mode === 'search'
+      ? f.results
+      : rows.map((row) => ({ window: f.window, row })).filter((r) => !f.gone.some((g) => sameRow(g, r)));
+  return { sort: f.sort, tabs: refs.map((ref) => tabOf(i, ref)) };
 }
 
 export interface Row {
@@ -356,6 +393,7 @@ export function check(row: Row): void {
     ...('closed' in row.expect ? { closed: closed?.kind === 'closeTab' ? closed.tabId : null } : {}),
     ...('restored' in row.expect ? { restored: restored?.kind === 'restoreTab' ? restored.sessionId : null } : {}),
     ...('host' in row.expect ? { host: last.after.interaction?.attempt.host } : {}),
+    ...('sorted' in row.expect ? { sorted: sortedOf(trace) } : {}),
   };
   expect(outcome).toStrictEqual({ exit: null, activate: null, ...row.expect });
 }

@@ -21,8 +21,10 @@ export const tab = (tabId: TabId, fields: Partial<LiveTab> = {}): LiveTab => ({
   url: `https://t${String(tabId)}.example/`,
   pinned: false,
   audible: false,
+  sleeping: false,
   active: false,
   iconKey: null,
+  lastAccessed: null,
   ...fields,
 });
 

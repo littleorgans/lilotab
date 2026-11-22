@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { abandoned, closedAs, pause, until, scrub, within } from './support.mjs';
-import { BrowserProcess, installChrome } from './browser.mjs';
+import { BrowserProcess, closeTarget, evaluateCDP, eventListener, extensionWorld, installChrome } from './browser.mjs';
 import { fixtureServer, createFixtures, ScenarioFixtures } from './fixtures.mjs';
 import { installProbe, inspectPanel, readProbe } from './probe.mjs';
 import { SEARCH_COMMAND, SWITCH_COMMAND } from '../../src/worker/names.ts';
@@ -255,25 +255,8 @@ export class Chrome {
       chrome.windows.update=(id,info,...rest)=>{if(info?.focused)p.focusRequests.push({wall:Date.now(),windowId:id});return update(id,info,...rest)};
       return true;
     })()`);
-    const proto = await this.worker.send('Runtime.evaluate', { expression: 'Function.prototype' });
-    const funcs = await this.worker.send('Runtime.queryObjects', {
-      prototypeObjectId: proto.result.objectId,
-      objectGroup: 'h1-command',
-    });
-    const listeners = await this.worker.send('Runtime.callFunctionOn', {
-      objectId: funcs.objects.objectId,
-      functionDeclaration:
-        'function(){return this.filter(f=>{try{return chrome.commands.onCommand.hasListener(f)}catch{return false}})}',
-    });
-    const props = await this.worker.send('Runtime.getProperties', {
-      objectId: listeners.result.objectId,
-      ownProperties: true,
-    });
-    const callbacks = props.result.filter((x) => /^\d+$/.test(x.name));
-    if (callbacks.length !== 1)
-      throw new Error(`Expected one registered command listener; observed ${callbacks.length}`);
-    this.commandListener = callbacks[0].value.objectId;
-    return callbacks.length;
+    this.commandListener = await eventListener(this.worker, 'commands', 'onCommand', 'h1-command');
+    return 1;
   }
   // Stops the extension worker as Chrome does when idle: close its target and detach every session from it.
   async stopWorker() {
@@ -283,14 +266,7 @@ export class Chrome {
     await until(() => !this.browser.targets().some((t) => this.ownWorker(t)), 5000);
   }
   async eval(session, expression, contextId) {
-    const r = await session.send('Runtime.evaluate', {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-      ...(contextId ? { contextId } : {}),
-    });
-    if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
-    return r.result.value;
+    return evaluateCDP(session, expression, contextId);
   }
   workerEval(expression) {
     return this.eval(this.worker, expression);
@@ -418,29 +394,15 @@ export class Chrome {
     await this.focus(tabId);
   }
   async closePopup(target) {
-    const s = await target.createCDPSession();
-    const { targetInfo } = await s.send('Target.getTargetInfo');
-    await this.root.send('Target.closeTarget', { targetId: targetInfo.targetId });
+    await closeTarget(this.root, target);
   }
   async prepareOverlay() {
     await this.workerEval(
       `chrome.scripting.executeScript({target:{tabId:${this.source.id},frameIds:[0]},world:'ISOLATED',func:()=>chrome.runtime.id})`,
     );
-    const s = await this.sourcePage.createCDPSession(),
-      contexts = [];
-    s.on('Runtime.executionContextCreated', (e) => contexts.push(e.context));
-    await s.send('Runtime.enable');
+    const s = await this.sourcePage.createCDPSession();
+    const context = await extensionWorld(s, this.extensionId);
     await s.send('DOM.enable');
-    let context;
-    for (const c of contexts)
-      if (
-        (await this.eval(s, 'typeof chrome!=="undefined" && chrome.runtime?.id', c.id).catch(() => null)) ===
-        this.extensionId
-      ) {
-        context = c.id;
-        break;
-      }
-    if (!context) throw new Error('Extension isolated world absent');
     this.overlay = { s, context, page: this.sourcePage, flavor: 'overlay' };
     await this.own(this.overlay, probeSource);
   }

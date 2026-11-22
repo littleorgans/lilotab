@@ -2,7 +2,7 @@
 // (03-components 3.3, 05-events 4.3, C-POP). After start it runs the same session as the overlay.
 
 import { clearOwnedPopup } from '../../browser/action-popup.ts';
-import { portName } from '../../core/protocol/index.ts';
+import { portName } from '../../core/protocol/messages.ts';
 import { PRODUCT } from '../../strings.ts';
 import { createListSurface } from '../list-view/index.ts';
 import { noteReleases } from '../session/early.ts';
@@ -13,7 +13,7 @@ const attempt = location.hash.slice(1); // the worker refuses a port whose name 
 // Measurement builds only, tested inline so release builds drop it (src/browser/timing.ts); before the session, so its
 // listeners run first.
 const probe = import.meta.env.MODE === 'timing' ? createProbe(attempt) : null;
-const released = noteReleases(window); // a release before the session listens still counts (C-POP-07)
+const releases = noteReleases(window); // a release before the session listens still counts (C-POP-07)
 document.title = PRODUCT;
 
 // Clears this tab's popup while it still names this attempt, so a worker stop between setPopup and its clear never
@@ -28,6 +28,7 @@ runSession(chrome.runtime.connect({ name: portName(attempt) }), {
   alive: () => true, // an extension page closes with its extension
   dispose: () => undefined,
   decline: () => null, // a popup never declines (05 4.6)
+  releases,
   mount() {
     const surface = createListSurface(document, 'popup');
     return {
@@ -45,7 +46,6 @@ runSession(chrome.runtime.connect({ name: portName(attempt) }), {
         probe?.focused();
         return null;
       },
-      released,
       latch: () => {
         surface.latch();
       },

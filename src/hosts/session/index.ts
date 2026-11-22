@@ -3,6 +3,8 @@
 // what they mean. Holds only host local state (03 4.12); the worker's disconnect is the close (05-events 4.4).
 
 import { isMac } from '../../browser/platform.ts';
+import { BENCH_MARK, TAP_MARK, benchMark } from '../../browser/timing.ts';
+import { isRecord } from '../../core/guards.ts';
 import {
   FIELD_EVENTS,
   hostInputStep,
@@ -22,6 +24,7 @@ import {
   type StartView,
 } from '../../core/protocol/index.ts';
 import type { ListSurface } from '../list-view/index.ts';
+import type { ReleaseNotes } from './early.ts';
 
 // What a host page adds around the shared session.
 export interface Host {
@@ -30,6 +33,7 @@ export interface Host {
   decline(): DeclineReason | null; // checked on start; the overlay may refuse (05 4.6), the popup never does
   mount(mode: HostMode): Mounted; // the start view's mode: an overlay started in search marks itself as latch does
   closed(): void; // after the session ends
+  releases?: ReleaseNotes; // read only capture already armed by the host page (03 3.3)
   sensed?(e: Event, effects: readonly HostEffect[]): void; // measurement builds only: what each event's steps did
 }
 
@@ -38,7 +42,6 @@ export interface Mounted {
   // Ready waits for the host to hold the keys (05 3.3): the popup until it has focus, the overlay while it takes focus
   // from a frame. A reason declines instead: focus stayed in the frame (C-HOLD-28, 05 4.6).
   focused(): Promise<DeclineReason | null>;
-  released?(key: string): Event | null; // this key's keyup the page received before listen (C-POP-07, C-HOLD-28)
   owns(e: Event): boolean; // the event happened inside the list, so the page must not see it
   latch(): void; // to search (03 4.12): the surface takes focus in the field, and the host may mark itself for it
   // Back to hold (T-67): the surface leaves search and focus goes where hold keeps it (03 4.12), the list when open.
@@ -82,6 +85,7 @@ const fieldValue = (m: Mounted): string | null => (m.surface.inField() ? m.surfa
 const fieldSelected = ({ surface: { field } }: Mounted): boolean => field.selectionStart !== field.selectionEnd;
 
 export function runSession(port: chrome.runtime.Port, host: Host): Session {
+  const { releases } = host;
   let state = initialHostInputState(isMac()); // the session (03 4.12, 05 4.5), its binding and the sensors' memory
   let mounted: Mounted | null = null;
   let done = false;
@@ -106,6 +110,7 @@ export function runSession(port: chrome.runtime.Port, host: Host): Session {
       return;
     }
     done = true;
+    releases?.stop();
     clearInterval(ping);
     clearTimeout(wake);
     for (const off of listeners) off();
@@ -164,6 +169,7 @@ export function runSession(port: chrome.runtime.Port, host: Host): Session {
         break;
       case 'paint':
         mounted?.surface.update(effect.frame);
+        if (import.meta.env.MODE === 'timing' && mounted) benchMark(BENCH_MARK.frame);
         break;
       case 'icons':
         mounted?.surface.icons(effect.icons);
@@ -189,8 +195,10 @@ export function runSession(port: chrome.runtime.Port, host: Host): Session {
         break;
       case 'hide':
         mounted?.hide(effect.fade);
+        if (import.meta.env.MODE === 'timing' && mounted && !effect.fade) benchMark(TAP_MARK.overlayCut);
         break;
       case 'post':
+        if (import.meta.env.MODE === 'timing' && effect.input.kind === 'release') benchMark(TAP_MARK.releasePosted);
         post({ t: 'input', input: effect.input });
         break;
       case 'end':
@@ -240,6 +248,13 @@ export function runSession(port: chrome.runtime.Port, host: Host): Session {
   function onSensed(e: Event, type: Sensed, m: Mounted): void {
     const facts = factsOf(e, type);
     if (!facts) return;
+    if (
+      import.meta.env.MODE === 'timing' &&
+      type === 'keyup' &&
+      state.binding &&
+      facts.key === HELD_KEY[state.binding.held]
+    )
+      benchMark(TAP_MARK.releaseSeen);
     dispatch(
       {
         kind: 'sensed',
@@ -271,9 +286,11 @@ export function runSession(port: chrome.runtime.Port, host: Host): Session {
   }
 
   // Row click in search or the open list (K-13, K-21): click is the authoritative row event, so moving off the row
-  // before release picks nothing.
+  // before release picks nothing. With Keep list open the worker may already accept a pick before its frame paints.
   function onClick(e: Event): void {
-    if (!latched() || !(e instanceof MouseEvent) || e.button !== 0 || !mounted) return;
+    const s = state.session;
+    const awaitingFrame = s?.onRelease === 'keep' && s.visible && !s.quiet;
+    if ((!latched() && !awaitingFrame) || !(e instanceof MouseEvent) || e.button !== 0 || !mounted) return;
     const row = mounted.surface.rowAt(e.target);
     if (row) e.preventDefault();
     send(row ? { kind: 'pick', row } : { kind: 'activity' });
@@ -329,18 +346,26 @@ export function runSession(port: chrome.runtime.Port, host: Host): Session {
   async function begin(s: StartView, wakeAt: number | null): Promise<void> {
     const reason = host.decline();
     if (reason) {
+      releases?.stop();
       post({ t: 'declined', reason }); // dormant: the worker retires the attempt and disconnects
       return;
     }
+    if (import.meta.env.MODE === 'timing') benchMark(BENCH_MARK.listStart);
     mounted = host.mount(s.mode);
     mounted.surface.start(s); // the start frame is painted before ready
+    if (import.meta.env.MODE === 'timing' && benchMark(BENCH_MARK.listEnd)) {
+      // The second callback follows a headless rendering opportunity for the initial list.
+      requestAnimationFrame(() => requestAnimationFrame(() => benchMark(BENCH_MARK.firstFrame)));
+    }
     const refused = await mounted.focused();
     if (done) return;
     if (refused) {
+      releases?.stop();
       post({ t: 'declined', reason: refused }); // as above; the disconnect removes the mount
       return;
     }
     listen(mounted);
+    if (import.meta.env.MODE === 'timing') benchMark(TAP_MARK.listening);
     if (latched()) startPing();
     post({ t: 'ready' }); // ready means the listeners are installed (03 3.3)
     if (wakeAt !== null) {
@@ -351,13 +376,15 @@ export function runSession(port: chrome.runtime.Port, host: Host): Session {
         Math.ceil(wakeAt - performance.now()), // fractional timeouts truncate; never wake before the due
       );
     }
-    // A held key release the page received before listen is heard now, after ready as all input is (C-POP-07, K-01).
-    const early = state.binding && mounted.released?.(HELD_KEY[state.binding.held]);
+    // Replay the bound key's release through the installed sensor path, after ready (05-events 4.4, C-POP-07, K-01).
+    const early = releases?.take(s.binding ? HELD_KEY[s.binding.held] : undefined);
     if (early && live()) onSensed(early, 'keyup', mounted);
   }
 
-  port.onMessage.addListener((raw) => {
-    if (live()) dispatch({ kind: 'message', raw });
+  port.onMessage.addListener((raw: unknown) => {
+    if (!live()) return;
+    if (import.meta.env.MODE === 'timing' && isRecord(raw) && raw['t'] === 'start') benchMark(BENCH_MARK.startReceived);
+    dispatch({ kind: 'message', raw });
   });
   port.onDisconnect.addListener(() => {
     if (chrome.runtime.lastError) {

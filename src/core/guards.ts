@@ -1,5 +1,7 @@
 // Shape checks shared by every parser at a boundary: protocol messages, stored settings, the session envelope.
 
+import type { RowRef } from './types.ts';
+
 export type Fields = Readonly<Record<string, unknown>>;
 
 // A plain object: not null, not an array, prototype Object or null.
@@ -24,3 +26,6 @@ export const isCount = (v: unknown, min: number): v is number => Number.isSafeIn
 export const isOneOf = <T>(v: unknown, values: readonly T[]): v is T => values.includes(v as T);
 
 export const isText = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max;
+
+export const isRowRef = (raw: unknown): raw is RowRef =>
+  hasExactly(raw, ['window', 'row']) && isIndex(raw['window'], Infinity) && isIndex(raw['row'], Infinity);

@@ -2,6 +2,7 @@
 // Every operation is pure and returns its input unchanged when nothing changed.
 
 import { isCount, isRecord, type Fields } from '../guards.ts';
+import type { Settings } from '../settings/index.ts';
 import type { LiveFacts, OpId, TabId, TabRef, WindowId } from '../types.ts';
 
 export type UseNumber = number; // from Recents.seq; 0 = never seen active (tabs) or never focused (windows)
@@ -60,6 +61,22 @@ export const windowList = (r: Recents, w: WindowId): readonly TabId[] => usedTab
 // Most recent first across windows (C-REC-02).
 export const globalList = (r: Recents): readonly TabRef[] =>
   usedTabs(r).map(({ tabId, windowId }) => ({ tabId, windowId }));
+
+// A quick tap takes the first member of the scoped recent pair other than its source (C-TAP-03 to C-TAP-07).
+export function togglePair(
+  r: Recents,
+  scope: Settings['quickScope'],
+  sourceWindow: WindowId | null,
+  ordered: readonly TabRef[] = globalList(r),
+): TabRef[] {
+  const pair: TabRef[] = [];
+  for (const tab of ordered) {
+    if (!isNormal(r, tab.windowId) || (scope === 'window' && tab.windowId !== sourceWindow)) continue;
+    pair.push(tab);
+    if (pair.length === 2) break;
+  }
+  return pair;
+}
 
 // The source window, then open windows by focus, then never focused ones in browser order (C-WIN-02, C-WIN-11).
 export function windowOrder(r: Recents, open: readonly WindowId[], source: WindowId): readonly WindowId[] {

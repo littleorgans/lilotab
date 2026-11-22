@@ -30,6 +30,7 @@ import {
   removed,
   searchKey,
   settingsChanged,
+  sort,
   status,
   stepKey,
   switchTo,
@@ -47,6 +48,8 @@ const OPEN = [press(0), ready(10), release(20)];
 // Search latched at 60 on the hold cursor, its 5 min idle due at 300060.
 const SEARCH = [...HOLD, latch(60)];
 const ALL = { quickScope: 'all' } as const;
+// On release Keep list open (C-SET-30): a move keeps the list open, so a release then leaves it open (C-TAP-12).
+const KEEP = { onRelease: 'keep' } as const;
 // List surface Popup: an ordinary hold there runs no idle (C-HOLD-13, C-POP-03).
 const POPUP = { listSurface: 'popup' } as const;
 // Include recently closed tabs On, the closed tab Omega read at a toolbar click; its row is { window: 2, row: 0 }.
@@ -203,6 +206,38 @@ describe('TB-01 interaction.holdGesture', () => {
       events: [...HOLD, win(60, 1), close(70), win(80, 1), win(90, 1)],
       expect: { state: 'holding', shown: 22 },
     },
+    // Window 1 Title rows: 11 Alpha, 12 Beta, 13 Gamma, 14 Theta; its Recent rows are 11, 13, 12, 14.
+    {
+      name: 'T-81 C-HOLD-29 C-HOLD-31: S sorts the shown window by title and highlights its first row',
+      events: [...HOLD, sort(60)],
+      expect: { state: 'holding', shown: 11, sorted: { sort: 'title', tabs: [11, 12, 13, 14] } },
+    },
+    {
+      name: 'T-81 C-WIN-06: S ends history stepping, so the shortcut then moves in the shown order',
+      settings: ALL,
+      events: [...HOLD, sort(60), stepKey(70, 1)],
+      expect: { state: 'holding', shown: 22 },
+    },
+    {
+      name: 'T-81 C-HOLD-29: S again restores the tab order',
+      events: [...HOLD, sort(60), sort(70)],
+      expect: { state: 'holding', shown: 11, sorted: { sort: 'recent', tabs: [11, 13, 12, 14] } },
+    },
+    {
+      name: 'T-83 C-HOLD-29 C-HOLD-07: S before the list shows shows it at once, sorted',
+      events: [press(0), ready(10), sort(20)],
+      expect: { state: 'holding', shown: 11, sorted: { sort: 'title', tabs: [11, 12, 13, 14] } },
+    },
+    {
+      name: 'T-74 C-HOLD-29: under Title the close key moves to the next row in title order',
+      events: [...HOLD, sort(60), move(70, 1), close(80)],
+      expect: { state: 'holding', shown: 13, closed: 12 },
+    },
+    {
+      name: 'C-HOLD-29: a new list starts in the tab order',
+      events: [...HOLD, sort(60), esc(70), press(80), ready(90), tick(130)],
+      expect: { state: 'holding', sorted: { sort: 'recent', tabs: [11, 13, 12, 14] } },
+    },
   ])('$name', check);
 
   // A quick tap at hold delay 0. The dwell is due at the press, so it expires before the ready host's
@@ -317,6 +352,88 @@ describe('TB-01 interaction.holdGesture', () => {
     })),
   ])('$name', check);
 
+  it.each<Row>([
+    {
+      name: 'T-16 C-TAP-12: Keep list open, an unmoved release before the list shows commits the quick target',
+      settings: KEEP,
+      events: [press(0), ready(10), release(20)],
+      expect: { state: 'idle', exit: 'commit', activate: switchTo(13) },
+    },
+    {
+      name: 'T-27 C-TAP-12: Keep list open, an unmoved release after the list shows commits the quick target',
+      settings: KEEP,
+      events: [...HOLD, release(60)],
+      expect: { state: 'idle', exit: 'commit', activate: switchTo(13) },
+    },
+    {
+      name: 'T-25 C-TAP-12: Right in the only window leaves the cursor unmoved, so release commits it',
+      settings: KEEP,
+      live: LIVE.one,
+      events: [...HOLD, win(60, 1), release(70)],
+      expect: { state: 'idle', exit: 'commit', activate: switchTo(13) },
+    },
+    {
+      name: 'C-TAP-12: with Open tab list, an unmoved Keep list open release commits the starting row',
+      settings: { ...LIST, ...KEEP },
+      events: OPEN,
+      expect: { state: 'idle', exit: 'commit' },
+    },
+    {
+      name: 'T-80 C-TAP-12: Keep list open, a release after Down leaves the list open on the cursor',
+      settings: KEEP,
+      events: [...HOLD, move(60, 1), release(70)],
+      expect: { state: 'holding.open', shown: 12 },
+    },
+    {
+      name: 'T-84 T-80 C-TAP-12: Keep list open, Page Up stops at the first row and leaves the list open',
+      settings: KEEP,
+      events: [...HOLD, page(60, -1, 5), release(70)],
+      expect: { state: 'holding.open', shown: 11 },
+    },
+    {
+      name: 'T-80 C-TAP-12: Keep list open, moving down and back up still leaves the list open',
+      settings: KEEP,
+      events: [...HOLD, move(60, 1), move(70, -1), release(80)],
+      expect: { state: 'holding.open', shown: 13 },
+    },
+    {
+      name: 'T-15 T-80 C-TAP-12: Keep list open, the shortcut again before the list shows keeps it open and shows it',
+      settings: KEEP,
+      events: [press(0), ready(10), press(20), release(30)],
+      expect: { state: 'holding.open', shown: 12 },
+    },
+    {
+      name: 'T-31 T-67 T-80 C-TAP-12: Keep list open, a search latch keeps the list open back in hold',
+      settings: KEEP,
+      events: [...HOLD, latch(60), release(70), leave(80)],
+      expect: { state: 'holding.open', shown: 13 },
+    },
+    {
+      name: 'T-70 C-TAP-12: Keep list open, Enter in the kept list commits the cursor',
+      settings: KEEP,
+      events: [...HOLD, move(60, 1), release(70), enter(80)],
+      expect: { state: 'idle', exit: 'commit', activate: switchTo(12) },
+    },
+    {
+      name: 'T-29 C-TAP-12: Keep list open, Esc closes the kept list without switching',
+      settings: KEEP,
+      events: [...HOLD, move(60, 1), release(70), esc(80)],
+      expect: { state: 'idle', exit: 'cancel' },
+    },
+    {
+      name: 'T-27 C-TAP-12: Keep list open in the popup, an unmoved release commits the quick target',
+      settings: { ...KEEP, ...POPUP },
+      events: [...HOLD, release(60)],
+      expect: { state: 'idle', exit: 'commit', activate: switchTo(13) },
+    },
+    {
+      name: 'T-80 C-TAP-12: Keep list open in the popup, a release after Down leaves the list open',
+      settings: { ...KEEP, ...POPUP },
+      events: [...HOLD, move(60, 1), release(70)],
+      expect: { state: 'holding.open', shown: 12 },
+    },
+  ])('$name', check);
+
   // Global history stepping (C-WIN-06; global step D1, D4, D6, D7, D9). Flip with All windows: the list opens on 21 in
   // window 2; the stack runs 11, 21, 13, 12, 22, 14, 23.
   it.each<Row>([
@@ -354,6 +471,16 @@ describe('TB-01 interaction.holdGesture', () => {
       settings: ALL,
       events: [...HOLD, move(60, 1), press(70)],
       expect: { state: 'holding', shown: 23 },
+    },
+    {
+      name: 'T-17 T-84 C-HOLD-37: End before the list shows shows it at once on the last row',
+      events: [press(0), ready(10), jump(20, 'last')],
+      expect: { state: 'holding', shown: 14 },
+    },
+    {
+      name: 'T-84 C-HOLD-37: End highlights the last row of the shown window',
+      events: [...HOLD, jump(60, 'last')],
+      expect: { state: 'holding', shown: 14 },
     },
     {
       name: 'T-24 C-WIN-06 D6: after Right the shortcut moves down the shown list',
@@ -629,6 +756,35 @@ describe('TB-03 interaction.search', () => {
       settings: CLOSED_ON,
       events: [...OMEGA, close(30)],
       expect: { state: 'search', closed: null, restored: null },
+    },
+    // Title order over every listed row: 11 Alpha, 12 Beta, 21 Delta, 22 Epsilon, 13 Gamma, 14 Theta, 23 Zeta.
+    {
+      name: 'T-82 C-SRCH-29: S sorts the results by title and highlights the first',
+      events: [...SEARCH, sort(70)],
+      expect: {
+        state: 'search',
+        shown: 11,
+        sorted: { sort: 'title', tabs: [11, 12, 21, 22, 13, 14, 23] },
+      },
+    },
+    {
+      name: 'C-SRCH-29 C-SRCH-11: a query change keeps Title and highlights the first result',
+      events: [...SEARCH, sort(70), query(80, 'ta')],
+      expect: { state: 'search', shown: 12, sorted: { sort: 'title', tabs: [12, 21, 14, 23] } },
+    },
+    {
+      name: 'T-31 C-SRCH-29: a hold sort carries into search, the cursor tab highlighted',
+      events: [...HOLD, sort(60), latch(70)],
+      expect: {
+        state: 'search',
+        shown: 11,
+        sorted: { sort: 'title', tabs: [11, 12, 21, 22, 13, 14, 23] },
+      },
+    },
+    {
+      name: 'T-67 C-SRCH-29: a search sort carries back to hold',
+      events: [...SEARCH, sort(70), leave(80)],
+      expect: { state: 'holding', sorted: { sort: 'title', tabs: [11, 12, 13, 14] } },
     },
   ])('$name', check);
 });

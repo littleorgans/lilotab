@@ -1,14 +1,17 @@
 // Overlay host: the self contained file the host link injects into frame 0 (03-components 3.3, 05-events 4.2, 5).
-// On evaluation it registers one runtime.onConnect listener per isolated world and does nothing else.
+// On evaluation it keeps one runtime.onConnect listener per isolated world and starts a read only release capture.
 
+import { TAP_MARK, benchMark } from '../../browser/timing.ts';
+import { HOST_DEADLINE_MS } from '../../core/interaction/types.ts';
 import { parsePortName, type DeclineReason, type HostMode } from '../../core/protocol/index.ts';
 import { createListSurface } from '../list-view/index.ts';
-import { noteReleases } from '../session/early.ts';
-import { runSession, type Host, type Mounted, type Session } from '../session/index.ts';
+import { noteReleases, type ReleaseNotes } from '../session/early.ts';
+import { runSession, type Mounted, type Session } from '../session/index.ts';
 
 interface Guard {
   alive(): boolean;
   dispose(): void;
+  armReleases(): void;
 }
 
 // The symbol registry belongs to this isolated world, so page script can neither see nor forge the guard (05 5). The
@@ -100,23 +103,16 @@ function mountOverlay(mode: HostMode): Mounted {
     }
   };
   // The take, checked at once before listen (C-HOLD-28, 05 4.6); a search start already holds focus in the field.
-  let released: ((key: string) => Event | null) | undefined;
   const take = (): DeclineReason | null => {
     if (!framed || document.activeElement === host) return null;
-    const noted = noteReleases(window); // a release after the take and before listen still counts (04 5)
     host.focus({ preventScroll: true });
-    if (document.activeElement === host && document.hasFocus()) {
-      released = noted;
-      return null;
-    }
+    if (document.activeElement === host && document.hasFocus()) return null;
     if (document.activeElement !== prior && prior instanceof HTMLElement) prior.focus({ preventScroll: true });
-    noted(''); // reading stops the noter
     return 'frameFocus';
   };
   return {
     surface,
     focused: () => Promise.resolve(take()),
-    released: (key) => released?.(key) ?? null,
     owns: (e) => e.composedPath().includes(host), // the closed root shows outside listeners only its host
     latch() {
       editable(host);
@@ -140,6 +136,7 @@ function mountOverlay(mode: HostMode): Mounted {
       document.removeEventListener('fullscreenchange', raise);
       void surface.close().then(() => {
         host.remove();
+        if (import.meta.env.MODE === 'timing') benchMark(TAP_MARK.overlayRemoved);
       });
     },
   };
@@ -148,7 +145,10 @@ function mountOverlay(mode: HostMode): Mounted {
 function install(): void {
   const scope = globalThis as unknown as Record<symbol, Guard | undefined>;
   const prior = scope[GUARD];
-  if (prior?.alive()) return; // evaluated again by the same instance at the next press: keep its listener
+  if (prior?.alive()) {
+    prior.armReleases(); // this evaluation follows the new command (05-events 4.2, 5)
+    return;
+  }
   try {
     prior?.dispose(); // an orphan from before an update or reload shares this world
   } catch {
@@ -157,6 +157,8 @@ function install(): void {
 
   const runtime = chrome.runtime; // captured, so alive reads this instance's context
   let session: Session | null = null;
+  let pending: ReleaseNotes | undefined;
+  let expiry: ReturnType<typeof setTimeout> | undefined;
 
   const alive = (): boolean => {
     try {
@@ -167,6 +169,7 @@ function install(): void {
   };
 
   function dispose(): void {
+    takePending()?.stop();
     try {
       runtime.onConnect.removeListener(onConnect);
     } catch {
@@ -177,13 +180,26 @@ function install(): void {
     if (scope[GUARD] === guard) scope[GUARD] = undefined;
   }
 
-  const host: Host = {
-    alive,
-    dispose,
-    decline: declineReason,
-    mount: mountOverlay,
-    closed: () => undefined,
-  };
+  function checkAlive(): boolean {
+    if (alive()) return true;
+    dispose();
+    return false;
+  }
+
+  function takePending(): ReleaseNotes | undefined {
+    clearTimeout(expiry);
+    expiry = undefined;
+    const notes = pending;
+    pending = undefined;
+    return notes;
+  }
+
+  function armReleases(): void {
+    takePending()?.stop();
+    pending = noteReleases(window, checkAlive);
+    // The worker can retire an injection without connecting (05-events 4.2, T-11, T-62).
+    expiry = setTimeout(() => takePending()?.stop(), HOST_DEADLINE_MS);
+  }
 
   // Only this extension's worker, which has no tab and the extension origin, on this protocol (05 4.2). Whether a
   // worker opened port carries origin or url is unverified (05 10); when both are absent the first two checks stand.
@@ -197,21 +213,26 @@ function install(): void {
   }
 
   function onConnect(port: chrome.runtime.Port): void {
-    if (!alive()) {
-      dispose();
-      return;
-    }
+    if (!checkAlive()) return;
     if (!accepts(port)) {
       port.disconnect();
       return;
     }
     session?.end(); // a new session ends any earlier one in this document
-    session = runSession(port, host);
+    session = runSession(port, {
+      alive,
+      dispose,
+      decline: declineReason,
+      mount: mountOverlay,
+      closed: () => undefined,
+      releases: takePending() ?? noteReleases(window, checkAlive),
+    });
   }
 
-  const guard: Guard = { alive, dispose };
+  const guard: Guard = { alive, dispose, armReleases };
   runtime.onConnect.addListener(onConnect);
   scope[GUARD] = guard;
+  armReleases();
 }
 
 install();

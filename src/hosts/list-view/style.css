@@ -1,5 +1,8 @@
-/* The list's look for both hosts. One 4 px spacing grid, two type sizes, system font; text and the highlighted row
-   meet WCAG AA in every theme (C-A11Y-06). The frozen look arrives as classes on .panel (03-components 4.6). */
+/* The list's look for both hosts. One 4 px spacing grid: pad 8, inset 12, gutter 4; radii nest from the panel's 14:
+   14 - 8 = 6. The one exception is a cell's optical 2 px between icon and count. Two type sizes, system font. The
+   faint ink (--fg3) appears only on bare glass; the selected row lifts it to --fg2, so text meets WCAG AA in every
+   theme (C-A11Y-06). The frozen look arrives as classes on .panel (03-components 4.6). Each selector ends in a class,
+   never :is(), so the browser files it under that class and skips it on other elements. */
 
 .panel {
   --row: 32px;
@@ -8,25 +11,33 @@
   --icon: 16px;
   --pad: 8px;
   --inset: 12px;
-  --radius: 6px;
+  --outer: 14px;
+  --radius: 6px; /* rows, field and cells: --outer minus --pad, its own token so the square popup keeps it */
+  --tile: 4px;
+  --age: 24px; /* holds the widest age, 59m or 4w+, kept on every row (C-HOLD-32) */
+  --fade: 24px;
+  --max: min(70vh, 640px); /* the panel's height cap; the list snaps under it to whole rows */
+  --edge: 2px; /* the panel's top and bottom border */
   --bg: light-dark(#ffffff, #1f1f22);
+  --glass: light-dark(rgb(250 250 252 / 90%), rgb(28 28 31 / 90%));
   --fg: light-dark(#1d1d1f, #ececee);
-  --fg2: light-dark(#5f5f66, #a1a1a9);
-  --line: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 10%));
-  --tint: light-dark(rgb(0 0 0 / 6%), rgb(255 255 255 / 9%));
-  --ring: light-dark(#0a60cf, #4a94ff);
-  --accent: #0a60cf;
-  --on-accent: #ffffff;
+  --fg2: light-dark(#55555c, #b4b4bb);
+  --fg3: light-dark(#636369, #9c9ca4);
+  --line: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 8%));
+  --tint: light-dark(rgb(0 0 0 / 4%), rgb(255 255 255 / 6%));
+  --select: light-dark(rgb(0 0 0 / 5%), rgb(255 255 255 / 8%));
+  --accent: light-dark(#0a60cf, #4a94ff);
+  --shade: light-dark(rgb(0 0 0 / 10%), rgb(0 0 0 / 40%));
 
   box-sizing: border-box;
   position: relative;
   display: flex;
   flex-direction: column;
-  max-height: min(70vh, 640px);
+  max-height: var(--max);
   overflow: hidden;
   pointer-events: auto;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--outer);
   background: var(--bg);
   color: var(--fg);
   font:
@@ -47,42 +58,44 @@
   color-scheme: light dark;
 }
 
-/* Text size Large grows row text and row height (C-A11Y-05). */
+/* Text size Large grows row text and row height, and the age box (C-A11Y-05). */
 .panel.large {
   --row: 40px;
   --text: 16px;
   --small: 13px;
+  --age: 28px;
 }
 
 /* Whole strip cells (C-WIN-16): a cell and its gap are 44 px, so n cells make a 44n - 4 px strip inside the 8 px head
    padding and 1 px border, a 44n + 14 px panel. At most 12 cells, snapping down by whole cells in narrow windows with
-   16 px left each side. */
+   16 px left each side. A 1 px top highlight and a two layer soft shadow (C-HOLD-26). */
 .panel.overlay {
-  --line: light-dark(rgb(0 0 0 / 10%), rgb(255 255 255 / 14%));
-
   width: calc(round(down, min(100vw - 46px, 528px), 44px) + 14px);
-  box-shadow: 0 16px 48px light-dark(rgb(0 0 0 / 22%), rgb(0 0 0 / 35%));
+  box-shadow:
+    inset 0 1px 0 light-dark(rgb(255 255 255 / 60%), rgb(255 255 255 / 8%)),
+    0 2px 6px light-dark(rgb(0 0 0 / 8%), rgb(0 0 0 / 16%)),
+    0 28px 72px light-dark(rgb(0 0 0 / 18%), rgb(0 0 0 / 30%));
 }
 
-/* Glass over the page (C-HOLD-26): a fixed tint that holds C-A11Y-06 over pure white or black before any blur, with
-   brighter secondary text. Without backdrop-filter the panel keeps the solid --bg and today's --fg2. */
+/* Glass over the page (C-HOLD-26): 90% opaque in both themes, so the faint ink holds C-A11Y-06 over pure white or
+   black before any blur. Without backdrop-filter the panel keeps the solid --bg with the same inks. */
 @supports (backdrop-filter: blur(1px)) {
   .panel.overlay {
-    --fg2: light-dark(#55555c, #b4b4bb);
-
-    background: light-dark(rgb(250 250 252 / 86%), rgb(32 32 35 / 84%));
-    backdrop-filter: blur(30px) saturate(160%);
+    background: var(--glass);
+    backdrop-filter: blur(40px) saturate(150%);
   }
 }
 
-/* The popup fills its window, which sizes to it (Chrome caps a popup at 800 by 600). It stays solid (C-HOLD-26); the
-   transparent side borders keep the overlay's 12 cell strip (C-WIN-16). */
+/* The popup fills its window, which sizes to it (Chrome caps a popup at 800 by 600). It stays solid and square
+   (C-HOLD-26); the transparent side borders keep the overlay's 12 cell strip (C-WIN-16). */
 .panel.popup {
+  --outer: 0px;
+  --max: 600px;
+  --edge: 0px;
+
   width: 542px;
-  max-height: 600px;
   border: 0;
   border-inline: 1px solid transparent;
-  border-radius: 0;
 }
 
 /* Hidden until a frame shows it; the popup keeps its frame painted from the first paint (C-POP-08). A closing list
@@ -95,37 +108,104 @@
   visibility: visible;
 }
 
-/* Strip or search field: one slot above the list (C-WIN-01, C-SRCH-02); both share its cell while they swap. */
+/* Strip or search field: one slot above the list (C-WIN-01, C-SRCH-02); both share its cell while they swap. No
+   divider: 12 px of space groups the head. */
 .head {
   flex: none;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   padding: var(--pad);
-  border-bottom: 1px solid var(--line);
 }
 .head > * {
   grid-area: 1 / 1;
 }
 
 .strip {
+  --f: 16px; /* a cell's empty 12 px inset and the icon's edge; counts stay clear */
+  --s: calc(100% + var(--f)) 100%;
+
   position: relative;
   display: flex;
   gap: 4px;
   overflow-x: auto;
   scrollbar-width: none;
+  mask-image:
+    linear-gradient(to right, transparent, #000 var(--f)), linear-gradient(to left, transparent, #000 var(--f));
+  mask-position:
+    calc(-1 * var(--f)) 0,
+    0 0;
+  animation-timeline: scroll(self x);
 }
 
+/* The strip's edge fades say more windows lie past an edge, with no scrollbar (C-HOLD-19, C-WIN-16): each fade (--f
+   long) sits outside its box (--s) until scrolling brings it in, and the far one leaves at the end, so a strip that
+   fits shows none. A fade stays on a cell's empty inset and its icon's edge, so counts keep full contrast
+   (C-A11Y-06). Scroll driven, no script; the list's scroll shadows below share the timing. */
+.strip,
+.list {
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+  animation-range:
+    0 var(--f),
+    calc(100% - var(--f)) 100%;
+}
+.strip {
+  mask-size: var(--s);
+  mask-repeat: no-repeat;
+  mask-composite: intersect;
+  animation-name: lead, tail;
+}
+@keyframes lead {
+  to {
+    mask-position: 0 0;
+  }
+}
+@keyframes tail {
+  from {
+    mask-size:
+      var(--s),
+      100% 100%;
+  }
+}
+
+/* The icon over the window's live tab count (C-WIN-17); the shown cell has the selected fill and the row's 3 px accent
+   bar turned on its side, centred inside its bottom edge (C-HOLD-36). */
 .cell {
+  position: relative;
+  box-sizing: border-box;
   flex: none;
   display: grid;
-  place-items: center;
+  grid-template-rows: var(--icon) auto;
+  justify-items: center;
+  align-content: center;
+  gap: 2px;
   width: calc(var(--icon) + 2 * var(--inset));
-  height: var(--row);
+  height: calc(var(--icon) + 2 * var(--inset));
+  padding-bottom: calc(var(--small) - 7px); /* clears the bar: 4 px, 6 at Large */
   border-radius: var(--radius);
 }
 .cell[aria-selected='true'] {
-  background: var(--tint);
-  box-shadow: inset 0 0 0 2px var(--ring);
+  background: var(--select);
+}
+.cell[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: var(--icon);
+  height: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  translate: -50% 0;
+}
+.count {
+  color: var(--fg3);
+  font-size: var(--small);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.cell[aria-selected='true'] .count {
+  color: var(--fg);
 }
 
 .field {
@@ -149,23 +229,64 @@
 }
 
 /* As tall as its longest window, so showing another window never moves the strip (C-WIN-15); scrolls on its own
-   with no scrollbar (C-HOLD-19). */
+   with no scrollbar (C-HOLD-19). 4 px under a head, so 12 px part the head from the first row. Under the panel's cap
+   the list shows whole rows only, as the strip shows whole cells (C-WIN-16); --head is the head's height. */
 .list,
 .empty {
+  --top: var(--pad);
+
   box-sizing: border-box;
   flex: 0 1 auto;
   min-height: 0;
-  height: calc(var(--rows) * var(--row) + 2 * var(--pad));
+  height: calc(var(--rows) * var(--row) + var(--top) + var(--pad));
   margin: 0;
-  padding: var(--pad);
+  padding: var(--top) var(--pad) var(--pad);
+}
+.head ~ .list,
+.head ~ .empty {
+  --top: 4px;
+  --head: calc(var(--icon) + 2 * var(--inset) + 2 * var(--pad));
+}
+.head ~ .search {
+  --head: calc(var(--row) + 2 * var(--pad));
 }
 .list {
+  --f: var(--row); /* a shadow eases in over the first row scrolled and out over the last */
+  --w: calc(100% - 2 * var(--pad)); /* the rows' width */
+
   position: relative;
+  max-height: calc(
+    round(down, var(--max) - var(--edge) - var(--head, 0px) - var(--top) - var(--pad), var(--row)) + var(--top) +
+      var(--pad)
+  );
   list-style: none;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
   outline: none;
+  background:
+    linear-gradient(var(--shade), transparent) 50% calc(-1 * var(--top)) / var(--w) var(--top) no-repeat,
+    linear-gradient(to top, var(--shade), transparent) 50% 100% / var(--w) 0 no-repeat;
+  animation-name: shade-above, shade-below;
+  animation-timeline: scroll(self);
+}
+
+/* Scroll shadows say more rows lie above or below, with no scrollbar (C-HOLD-19): a soft shade drawn under the rows
+   and only in the list's top and bottom padding, so no whole row's text loses contrast (C-A11Y-06). The top one
+   enters once a row sits above, the bottom one leaves at the end, so a list that fits shows none. */
+@keyframes shade-above {
+  to {
+    background-position:
+      50% 0,
+      50% 100%;
+  }
+}
+@keyframes shade-below {
+  from {
+    background-size:
+      var(--w) var(--top),
+      var(--w) var(--pad);
+  }
 }
 .empty {
   display: grid;
@@ -177,17 +298,32 @@
   display: none;
 }
 
-/* "Could not copy" for 2 s (C-SRCH-26): one line over the list's foot, out of layout. */
+/* The kept list's hint line (C-TAP-12): one quiet line under the rows. */
+.foot {
+  flex: none;
+  margin: 0;
+  padding: 0 var(--inset) var(--pad);
+  color: var(--fg2);
+  font-size: var(--small);
+}
+.foot:empty {
+  display: none;
+}
+
+/* "Could not copy" or a sort toggle for 2 s (C-SRCH-26, C-HOLD-30): one row over the list's last row slot, out of
+   layout. */
 .notice {
   position: absolute;
   inset: auto var(--pad) var(--pad);
-  padding: 4px var(--inset);
+  display: grid;
+  place-items: center;
+  height: var(--row);
+  padding: 0 var(--inset);
   border-radius: var(--radius);
   background: var(--bg);
   box-shadow: inset 0 0 0 1px var(--line);
   color: var(--fg);
   font-size: var(--small);
-  text-align: center;
 }
 .notice:empty {
   display: none;
@@ -199,7 +335,9 @@
   margin: 0;
 }
 
+/* The selected row: a neutral fill and a 3 px accent bar 4 px inside its left edge (C-HOLD-36). */
 .row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--pad);
@@ -208,88 +346,186 @@
   border-radius: var(--radius);
   white-space: nowrap;
 }
+/* Fixed heights keep scroll geometry. Paint containment changes pixel rounding, so use it only away
+   from the viewport (C-HOLD-19). */
+.list.contain-rows > .row:not(.near-viewport) {
+  content-visibility: auto;
+}
+/* A click commits in search (C-A11Y-03), so the row under the pointer takes a faint tint; the bar stays the only
+   selection cue. */
+.search .row:hover {
+  background: var(--tint);
+}
 .row[aria-selected='true'] {
-  --fg2: rgb(255 255 255 / 85%);
+  --fg3: var(--fg2);
+
+  background: var(--select);
+}
+.row[aria-selected='true']::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  width: 3px;
+  height: calc(var(--text) + 1px);
+  border-radius: 2px;
   background: var(--accent);
-  color: var(--on-accent);
+  translate: 0 -50%;
 }
 
-/* A fixed box, so an icon arriving late moves nothing (C-ICON-04); the placeholder is a neutral square (C-ICON-03). */
+/* One fixed slot, so an icon arriving late moves nothing (C-ICON-04): a favicon as it is in every theme (C-ICON-08),
+   or the site's letter (C-ICON-03). On the selected fill the letter takes full ink. 16 px, and 20 px in Large text
+   rows; strip cells keep 16 so their 44 px maths holds (C-WIN-16). */
 .icon {
   flex: none;
   width: var(--icon);
   height: var(--icon);
-  border-radius: 4px;
+  border-radius: var(--tile);
 }
-span.icon {
+.panel.large .row > .icon {
+  width: 20px;
+  height: 20px;
+}
+/* A sleeping tab's icon greys and dims; its title keeps its ink, so a list mostly asleep still reads (C-A11Y-02).
+   Recently closed rows read second to open tabs: a dimmer icon and the title in --fg2; matches keep full ink
+   (C-SRCH-27). At 70% a letter tile's glyph holds 3:1 on its tile in both themes, over glass too (C-A11Y-06). */
+.asleep > .icon {
+  filter: grayscale(1);
+}
+:is(.asleep, .past) > .icon {
+  opacity: 0.7;
+}
+.past .title {
+  color: var(--fg2);
+}
+.letter {
+  display: grid;
+  place-items: center;
   background: var(--tint);
-  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--fg2);
+  font-size: var(--small);
+  font-weight: 600;
+  line-height: 1;
+}
+:is(.row, .cell)[aria-selected='true'] .letter {
+  color: var(--fg);
 }
 
+/* The page title leads, noise recedes, a fade replaces the ellipsis; matches return to full ink and weight (C-HOLD-34,
+   C-HOLD-35, C-SRCH-30). A cut title ends the inset's 12 px before the next slot. */
 .title {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
+  margin-right: 4px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--fade)), transparent);
+}
+.noise {
+  color: var(--fg3);
+}
+mark {
+  background: none;
+  color: var(--fg);
+  font-weight: 600;
 }
 
-/* Search rows show the host after the title (C-SRCH-21) and a window marker (C-SRCH-07). */
+/* Search rows show the host after the title and its marks (C-SRCH-21) and a window marker (C-SRCH-07); hold shows
+   the host on the highlighted row only, right after the title. */
+.search .site,
+.search .marker,
+.search .closed,
+.search .ago {
+  order: 1;
+}
 .site {
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: none;
   max-width: 40%;
   overflow: hidden;
-  text-overflow: ellipsis;
   color: var(--fg2);
   font-size: var(--small);
 }
+.site.cut {
+  mask-image: linear-gradient(to right, #000 calc(100% - 12px), transparent);
+}
 
-.pin {
+/* Pin and sound share one 12 px box; a static pin takes the age's quiet ink, the live sound keeps --fg2 (C-HOLD-25). */
+.pin,
+.sound {
   flex: none;
   width: 12px;
   height: 12px;
-  fill: var(--fg2);
-}
-
-/* Still, with no mute control (C-HOLD-25). */
-.sound {
-  flex: none;
-  width: 14px;
-  height: 14px;
   color: var(--fg2);
 }
-
-/* A recently closed row's mark, in the window marker's box; shown with one window too (C-SRCH-27). */
-.closed {
-  flex: none;
-  width: calc(var(--small) + 6px);
-  height: calc(var(--small) + 6px);
-  color: var(--fg2);
+.pin {
+  fill: var(--fg3);
+}
+.cell .sound {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 10px;
+  height: 10px;
 }
 
+/* Marker and closed mark share one fixed box, a 12 px mark and a digit, so the host ends at one x on every search row;
+   a recently closed row shows its mark with one window too (C-SRCH-07, C-SRCH-27). The marker is the window's strip
+   icon, with its number after it where cells share an icon; both marks start at the box's left edge. */
+.closed,
 .marker {
   flex: none;
-  box-sizing: border-box;
-  min-width: calc(var(--small) + 6px);
-  height: calc(var(--small) + 6px);
-  padding: 0 4px;
-  border: 1px solid var(--fg2);
-  border-radius: 999px;
+  width: calc(var(--small) + 13px);
   color: var(--fg2);
+}
+.marker {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
   font-size: var(--small);
-  line-height: calc(var(--small) + 4px);
-  text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.marker.current {
-  background: var(--fg2);
-  color: var(--bg);
+.closed {
+  box-sizing: border-box;
+  height: 12px;
+  padding-right: calc(var(--small) + 1px);
 }
-.row[aria-selected='true'] .marker.current {
-  color: var(--accent);
+.marker .icon {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+/* The letter scales with its tile, as an icon does: 11 px in 16 is 8 in 12. */
+.marker .letter {
+  font-size: 8px;
+}
+/* The current window's rows show no marker, its box kept so hosts still end at one x (C-SRCH-07). */
+.marker.current {
+  visibility: hidden;
 }
 
-.list:not(.search) :is(.site, .marker),
-.panel.solo .marker {
+/* The age box keeps its width on every row, so ages hold one x in hold and search; the 2x takes space only on a row
+   with copies, after the title's marks (C-HOLD-32, C-HOLD-33). */
+.dup,
+.ago {
+  flex: none;
+  color: var(--fg3);
+  font-size: var(--small);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.dup:empty {
   display: none;
+}
+.ago {
+  width: var(--age);
+}
+
+/* With one window the marker box stays, empty, only beside recently closed rows, so hosts still end at one x. */
+.list:not(.search) :not([aria-selected='true']) > .site,
+.list:not(.search) .marker,
+.panel.solo .list:not(:has(.closed)) .marker {
+  display: none;
+}
+.panel.solo .marker {
+  visibility: hidden;
 }

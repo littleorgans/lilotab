@@ -2,7 +2,7 @@
 // C-SRCH-26).
 
 import { isMac } from '../../browser/platform.ts';
-import { KEYS_TEXT as T, KEY_NAMES } from '../../strings.ts';
+import { KEYS_TEXT as T, KEY_NAMES } from '../strings.ts';
 import { el, hint, row } from '../dom.ts';
 import type { Shortcut } from '../shortcut.ts';
 

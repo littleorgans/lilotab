@@ -14,6 +14,7 @@ export interface HostSession {
   quiet: boolean; // a hold ending input was sent: hidden, and no frame paints (03 4.12)
   shape: readonly number[]; // rows per start view window, then the closed window's, for parsing (05 4.5)
   quickTap: StartView['quickTap']; // frozen at the press (C-SET-19)
+  onRelease: StartView['onRelease']; // frozen at the press (C-SET-30)
   open: boolean; // the open list (T-68): latched locally or by a frame, never cleared; survives search
   visible: boolean; // shown by the last paint or local search latch; a return to hold keeps it shown (K-08, T-67)
   source: RowRef; // the source tab's row
@@ -26,7 +27,8 @@ export interface HostSession {
 const targetOf = (frame: Frame): RowRef | null =>
   frame.mode === 'hold' ? { window: frame.window, row: frame.row } : (frame.results[frame.highlight] ?? null);
 
-const isOpen = (frame: Frame) => frame.mode === 'hold' && frame.open;
+// A pending gesture can reach the fallback host already kept. Take focus only once its list is shown (T-80).
+const isOpen = (frame: Frame) => frame.mode === 'hold' && frame.visible && frame.open;
 const isVisible = (frame: Frame) => frame.mode === 'search' || frame.visible;
 
 export const sessionOf = (start: StartView): HostSession => ({
@@ -37,6 +39,7 @@ export const sessionOf = (start: StartView): HostSession => ({
   quiet: false,
   shape: shapeOf(start.view),
   quickTap: start.quickTap,
+  onRelease: start.onRelease,
   open: isOpen(start.frame),
   visible: isVisible(start.frame),
   source: { window: 0, row: start.view.windows[0]?.current ?? 0 },
@@ -99,26 +102,29 @@ function receive(s: HostSession | null, raw: unknown): SessionStep {
 // latchSearch in search or a leaveSearch outside a hold started list switches nothing, as the worker renders nothing
 // for them; the classifier never sends them (K-07, K-14, K-22). In Open tab list a hold release never hides: on the
 // painted source it opens the list locally, an open list ignores it, and on another tab the worker's close follows
-// (T-68, T-69, T-27). A commit candidate sets how the list closes: a cut on another tab, a fade on the source, which
-// switches nothing (T-47); a cancel always fades (03 4.12).
+// (T-68, T-69, T-27). With Keep list open the worker confirms row changes in an open frame (T-80); a release only
+// posts so that frame can still paint. A commit candidate sets how the list closes: a cut on another tab, a fade
+// on the source, which switches nothing (T-47); a cancel always fades (03 4.12).
 function send(s: HostSession, input: HostInput): SessionStep {
   const post: SessionEffect = { kind: 'post', input };
+  const keep = s.onRelease === 'keep';
   const toggle = (effect: 'latch' | 'unlatch'): SessionStep => ({
-    session: { ...s, mode: other(s.mode), pending: s.pending + 1, visible: true },
+    session: { ...s, mode: other(s.mode), pending: s.pending + 1, visible: true, open: s.open || keep },
     effects: [{ kind: effect }, post],
   });
   if (input.kind === 'latchSearch' && s.mode === 'hold') return toggle('latch');
   if (input.kind === 'leaveSearch' && s.mode === 'search' && s.origin === 'hold') return toggle('unlatch');
-  if (s.mode === 'hold' && input.kind === 'release' && s.quickTap === 'list') {
+  if (s.mode === 'hold' && input.kind === 'release' && (s.quickTap === 'list' || keep)) {
     if (s.open) return { session: s, effects: [post] };
-    if (!isSource(s, s.target)) return { session: { ...s, ending: 'cut' }, effects: [post] };
-    return { session: { ...s, open: true }, effects: [{ kind: 'open' }, post] };
+    const source = isSource(s, s.target);
+    if (!keep && source) return { session: { ...s, open: true }, effects: [{ kind: 'open' }, post] };
+    return { session: { ...s, ending: source ? 'fade' : 'cut' }, effects: [post] };
   }
   if (s.mode === 'hold' && (input.kind === 'release' || input.kind === 'cancel')) {
     const fade = input.kind === 'cancel' || isSource(s, s.target);
     return { session: { ...s, quiet: true, ending: fade ? 'fade' : 'cut' }, effects: [{ kind: 'hide', fade }, post] };
   }
-  if ((s.mode === 'search' || s.open) && (input.kind === 'enter' || input.kind === 'pick')) {
+  if ((s.mode === 'search' || s.open || (keep && s.visible)) && (input.kind === 'enter' || input.kind === 'pick')) {
     const row = input.kind === 'pick' ? input.row : s.target; // Enter with no search results commits nothing
     if (row) return { session: { ...s, ending: isSource(s, row) ? 'fade' : 'cut' }, effects: [post] };
   }

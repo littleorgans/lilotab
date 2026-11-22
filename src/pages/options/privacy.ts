@@ -1,7 +1,7 @@
 // Privacy and data: two statements, Clear now and Restore defaults (C-SET-24, C-SET-10, C-SET-11).
 
 import { CLEAR_ANSWER_MS, PROTOCOL, parseOptionsReply, type OptionsRequest } from '../../core/index.ts';
-import { OPTIONS_TEXT as T } from '../../strings.ts';
+import { OPTIONS_TEXT as T } from '../strings.ts';
 import { el, hint, row } from '../dom.ts';
 
 // "Clear now": one request, answered when the cleared history saves; silence past 5 s reads as not cleared (06 5.3).

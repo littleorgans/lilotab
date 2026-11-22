@@ -2,7 +2,7 @@
   "name": "lilotab",
   "displayName": "Lilotab",
   "version": "0.0.0",
-  "description": "Keyboard driven tab switcher.",
+  "description": "Switch Chrome tabs by keyboard. Tap for your last used tab. Hold to choose. Search open tabs across windows.",
   "homepage": "https://github.com/littleorgans/lilotab",
   "bugs": {
     "url": "https://github.com/littleorgans/lilotab/blob/main/KNOWN_ISSUES.md"

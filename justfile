@@ -33,7 +33,12 @@ build:
 # Measurement build into dist-timing/, unzipped: the release build plus the gesture timing log, read and exported on
 # the options page. Its own folder, so `just build` never overwrites it. Never ship it.
 build-timing:
-    {{ vp }} build --mode timing --outDir dist-timing
+    {{ vp }} build --mode timing --outDir dist-timing --sourcemap hidden
+
+# Measure the headless overlay, probe synthetic scale with `just bench scale`, or compare refs with `ab`.
+[positional-arguments]
+bench *args:
+    @exec node test/bench/run.mjs "$@"
 
 # Release build, then the headless Chrome harness over dist/; output in .smoke/runs/<UTC time>, nonzero exit on any FAIL.
 # Fetches the pinned Chrome for Testing into .smoke/browsers on first use. Diagnose with --only <scenario id substring>;

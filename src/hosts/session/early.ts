@@ -1,23 +1,35 @@
-// A held key release a host page received before its session listens (C-POP-07, C-HOLD-28, 04-state-machine 5): from
-// the popup page's first script or the overlay's frame take, the last trusted keyup of each key until a later keydown
-// of that key. Its listeners only read: they never prevent, stop or move focus.
-export function noteReleases(target: Pick<Window, 'addEventListener'>): (key: string) => Event | null {
-  const released = new Map<string, Event>();
-  const stop = new AbortController();
-  for (const type of ['keydown', 'keyup'] as const) {
-    target.addEventListener(
-      type,
-      (e) => {
-        if (!e.isTrusted) return;
-        if (type === 'keyup') released.set(e.key, e);
-        else released.delete(e.key);
-      },
-      { capture: true, signal: stop.signal },
-    );
+export interface ReleaseNotes {
+  take(key: string | undefined): KeyboardEvent | null;
+  stop(): void;
+}
+
+// Before the session listens (K-01, C-POP-07), remember the last trusted keyup of each key until a later keydown
+// of that key. These listeners only observe the event.
+export function noteReleases(
+  target: Pick<Window, 'addEventListener' | 'removeEventListener'>,
+  alive?: () => boolean,
+): ReleaseNotes {
+  const released = new Map<string, KeyboardEvent>();
+  const events = ['keydown', 'keyup'] as const;
+  const capture = { capture: true, passive: true };
+  function observe(e: KeyboardEvent): void {
+    if (alive?.() === false || !e.isTrusted) return;
+    if (e.type === 'keyup') released.set(e.key, e);
+    else released.delete(e.key);
   }
-  // Read once, when the session listens or declines; from then on it hears each key itself.
-  return (key) => {
-    stop.abort();
-    return released.get(key) ?? null;
+  for (const type of events) {
+    target.addEventListener(type, observe, capture);
+  }
+  function stop(): void {
+    for (const type of events) target.removeEventListener(type, observe, capture);
+    released.clear();
+  }
+  return {
+    take(key) {
+      const event = key === undefined ? null : (released.get(key) ?? null);
+      stop();
+      return event;
+    },
+    stop,
   };
 }

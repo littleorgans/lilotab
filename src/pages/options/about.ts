@@ -1,7 +1,8 @@
 // About: the description, the installed version, the welcome tab again and two links (C-SET-28). Following a link is
 // user navigation; the page makes no request (C-SEC-04).
 
-import { ABOUT_TEXT as T, PRODUCT } from '../../strings.ts';
+import { PRODUCT } from '../../strings.ts';
+import { ABOUT_TEXT as T } from '../strings.ts';
 import { WELCOME_PAGE } from '../../worker/names.ts';
 import { el, hint, row } from '../dom.ts';
 

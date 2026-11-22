@@ -17,7 +17,7 @@ import {
   type Settings,
   type SettingsEdit,
 } from '../../core/index.ts';
-import { OPTIONS_TEXT as T, SHORTCUT_TEXT } from '../../strings.ts';
+import { OPTIONS_TEXT as T, SHORTCUT_TEXT } from '../strings.ts';
 import { SEARCH_COMMAND, SWITCH_COMMAND } from '../../worker/names.ts';
 import { el, group } from '../dom.ts';
 import { shortcutBlock } from '../shortcut.ts';

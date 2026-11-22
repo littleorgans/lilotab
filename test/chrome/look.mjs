@@ -21,7 +21,7 @@ export function lookScenarios(c, e, add) {
           `${flavor === 'overlay' && width === 500 ? '454 / 436' : '542 / 524'} px panel / strip, whole cells at both ends, ${textSize === 'large' ? 40 : 32} px rows (AC-25; C-WIN-16, C-SET-09)`,
           async () => {
             const h = await c.open(flavor, { width, textSize });
-            // The popup shell is visible before .shown. Wait for the list and its renderer driven open motion.
+            // The popup shell is visible before .shown. Wait for the list and its timed opening motion.
             const start = await until(async () => {
               const x = await c.inspect(h);
               return x.class?.split(' ').includes('shown') && !x.animations.length ? x : null;
@@ -103,7 +103,7 @@ export function lookScenarios(c, e, add) {
     );
     add(
       `owner-overlay-glass-${theme}`,
-      `Overlay has ${theme === 'dark' ? '84' : '86'}% tint, blur(30px) saturate(160%); owner screenshot (AC-25; C-HOLD-26)`,
+      `Overlay has a 90% tint, blur(40px) saturate(150%); owner screenshot (AC-25; C-HOLD-26)`,
       async () => {
         const h = await c.open('overlay', { theme });
         await pause(120);
@@ -111,9 +111,9 @@ export function lookScenarios(c, e, add) {
           artifact = await c.shot(h, `overlay-${theme}-busy.png`);
         return {
           pass:
-            /blur\(30px\)/.test(measured.backdrop) &&
-            /saturate\(1\.6\)|saturate\(160%\)/.test(measured.backdrop) &&
-            measured.background.includes(theme === 'dark' ? '0.84' : '0.86'),
+            /blur\(40px\)/.test(measured.backdrop) &&
+            /saturate\(1\.5\)|saturate\(150%\)/.test(measured.backdrop) &&
+            measured.background.includes('0.9'),
           measured,
           artifacts: [artifact],
         };
@@ -137,7 +137,7 @@ export function lookScenarios(c, e, add) {
   for (const flavor of ['overlay', 'popup'])
     add(
       `sound-${flavor}`,
-      'Synthetic audible browser fact produces a 14 px display only speaker and Playing sound in hold and search names (AC-22, AC-23; C-HOLD-25)',
+      'Synthetic audible browser fact produces a 12 px aria-hidden speaker and Playing sound in hold and search names (AC-22, AC-23; C-HOLD-25)',
       async () => {
         const naturalAudible = await c.workerEval(
           `(async()=>{const t=await chrome.tabs.get(${c.audio.id});return t.audible})()`,
@@ -155,7 +155,9 @@ export function lookScenarios(c, e, add) {
             (x) =>
               sound(x)?.sound &&
               sound(x).label.includes('Playing sound') &&
-              sound(x).svgs.some((s) => near(s.width, 14) && s.hidden === 'true') &&
+              sound(x).svgs.some(
+                (s) => s.class?.split(/\s+/).includes('sound') && near(s.width, 12) && s.hidden === 'true',
+              ) &&
               x.rows.filter((r) => r.title !== 'H1 Audio').every((r) => !r.sound),
           ),
           measured: {

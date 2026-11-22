@@ -105,6 +105,7 @@ const INPUT_CLASS: Readonly<Record<HostInput['kind'], InputClass>> = {
   jump: 'key',
   page: 'key',
   close: 'key',
+  sort: 'key',
   cancel: 'other',
 };
 

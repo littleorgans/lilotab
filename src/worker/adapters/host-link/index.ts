@@ -1,6 +1,7 @@
 // Worker half of both hosts: launch, attempt registry and channels (03-components 3.2, 05-events 4.2 to 4.4).
 
 import { clearOwnedPopup } from '../../../browser/action-popup.ts';
+import { BENCH_MARK, benchMark } from '../../../browser/timing.ts';
 import {
   admit,
   parseHostToWorker,
@@ -97,6 +98,7 @@ export function createHostLink(overlayFile: string): HostLink {
       });
     });
     const wake = a.dwell === null ? null : Math.max(0, a.dwell - clock.now());
+    if (import.meta.env.MODE === 'timing' && a.host === 'overlay') benchMark(BENCH_MARK.startSent);
     port.postMessage({ t: 'start', start: a.start, wake });
   }
 

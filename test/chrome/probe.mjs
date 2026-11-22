@@ -86,8 +86,10 @@ export function installProbe() {
     remove.call(this, type, fn, options);
   };
   const animate = Element.prototype.animate;
+  const isTimed = (animation) => animation.timeline instanceof DocumentTimeline;
   Element.prototype.animate = function (frames, options) {
     const animation = animate.call(this, frames, options);
+    if (!isTimed(animation)) return animation;
     const timing = animation.effect.getTiming();
     const row = {
       at: now(),
@@ -115,21 +117,31 @@ export function installProbe() {
     );
     return animation;
   };
-  const captureCSS = (e) => {
-    for (const a of e.target.getAnimations())
+  const captureCSS = (event) => {
+    for (const a of event.target.getAnimations()) {
+      const matches =
+        event.type === 'animationstart'
+          ? a.animationName === event.animationName
+          : a.transitionProperty === event.propertyName;
+      if (!matches || !isTimed(a)) continue;
       p.animations.push({
         at: now(),
         source: 'CSS',
-        target: e.target.className,
+        target: event.target.className,
         timing: a.effect.getTiming(),
         frames: a.effect.getKeyframes(),
       });
+    }
   };
-  add.call(document, 'animationstart', captureCSS, true);
+  const observeCSS = (root) => {
+    add.call(root, 'animationstart', captureCSS, true);
+    add.call(root, 'transitionrun', captureCSS, true);
+  };
+  observeCSS(document);
   const attachShadow = Element.prototype.attachShadow;
   Element.prototype.attachShadow = function (options) {
     const root = attachShadow.call(this, options);
-    add.call(root, 'animationstart', captureCSS, true);
+    observeCSS(root);
     return root;
   };
   // A microtask can run between DOM listeners. Keep one mutable observation per
@@ -240,12 +252,15 @@ export function inspectPanel() {
     lists,
     selected: selected ? rowInfo(selected) : null,
     rows: [...this.querySelectorAll('.list [role="option"]')].filter((e) => !hidden(e)).map(rowInfo),
-    animations: this.getAnimations({ subtree: true }).map((a) => ({
-      target: a.effect.target.className,
-      state: a.playState,
-      timing: a.effect.getTiming(),
-      frames: a.effect.getKeyframes(),
-    })),
+    // Scroll and view timelines can remain active after the timed opening completes.
+    animations: this.getAnimations({ subtree: true })
+      .filter((a) => a.timeline instanceof DocumentTimeline)
+      .map((a) => ({
+        target: a.effect.target.className,
+        state: a.playState,
+        timing: a.effect.getTiming(),
+        frames: a.effect.getKeyframes(),
+      })),
   };
 }
 

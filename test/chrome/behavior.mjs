@@ -1,6 +1,9 @@
 import { closedAs, pause, scrub } from './support.mjs';
 import { HELD } from './chrome.mjs';
 export const state = (c, h) => c.inspect(h).catch(closedAs({ connected: false, shown: false }));
+// The list once its close fade ends, or as it stands after a second: removal waits for the first frame past the fade,
+// so a fixed pause races the frame clock.
+export const closed = (c, h) => c.waitRemoved(h).catch(() => state(c, h));
 export const probe = (c, h) =>
   c.probe(h).catch(closedAs({ closed: true, animations: [], events: [], intervals: [], activeSensors: [] }));
 // A check that threw, as a harness FAIL with the last host as the error left it; a check that cleans up records this
@@ -27,6 +30,11 @@ async function opened(c, flavor, options = {}) {
   return { h, initial, released: await state(c, h) };
 }
 const downEvents = (p) => p.events.filter((e) => e.kind === 'input' && e.key === 'ArrowDown');
+const keptHint = (c, h) =>
+  c.panelCall(h, function () {
+    const foot = this.querySelector('.foot');
+    return foot?.getClientRects().length ? foot.textContent : null;
+  });
 export function behaviorScenarios(c, e, add) {
   for (const flavor of ['overlay', 'popup']) {
     add(
@@ -144,6 +152,81 @@ export function behaviorScenarios(c, e, add) {
             !ended.connected &&
             target.title === stepped.selected?.title,
           measured: { released, stepped, ignored, ended, target, probe: await probe(c, h) },
+        };
+      },
+    );
+    add(
+      `10-keep-open-${flavor}`,
+      'Keep list open: release preserves focus and the hint after held Down or F; unheld Home and End reach the ends unseen by the page; Enter commits in hold and Esc closes typed search (C-TAP-12, C-SET-30, C-HOLD-37)',
+      async () => {
+        const settings = { quickTap: 'flip', onRelease: 'keep' };
+        const h = await c.open(flavor, settings);
+        await c.key(h, 'ArrowDown', HELD.modifier);
+        await pause(30);
+        const moved = await state(c, h);
+        await c.release(h);
+        await pause(30);
+        const released = await state(c, h),
+          holdHint = await keptHint(c, h),
+          stayed = await active(c);
+        await c.resetProbe(h);
+        await c.key(h, 'Home');
+        await pause(30);
+        const first = await state(c, h);
+        await c.key(h, 'End');
+        await pause(30);
+        const last = await state(c, h),
+          ends = (await probe(c, h)).events.filter((e) => e.kind === 'downstream');
+        await c.key(h, 'Enter');
+        await pause(100);
+        const ended = await state(c, h),
+          target = await active(c),
+          holdProbe = await probe(c, h);
+
+        const searchHost = await c.open(flavor, settings);
+        await c.key(searchHost, 'f', HELD.modifier);
+        await c.release(searchHost);
+        await c.type(searchHost, 'source');
+        const search = await state(c, searchHost),
+          searchHint = await keptHint(c, searchHost);
+        await c.key(searchHost, 'Escape');
+        const cancelled = await closed(c, searchHost),
+          afterCancel = await active(c);
+        return {
+          pass:
+            moved.shown &&
+            released.shown &&
+            released.listFocused &&
+            released.selected?.title === moved.selected?.title &&
+            stayed.id === c.source.id &&
+            holdHint === 'Enter switches, Esc closes' &&
+            first.selected?.title === released.rows?.[0]?.title &&
+            last.selected?.title === released.rows?.at(-1)?.title &&
+            last.selected?.title !== first.selected?.title &&
+            ends.length === 0 &&
+            !ended.connected &&
+            target.title === last.selected?.title &&
+            search.fieldFocused &&
+            search.fieldText === 'source' &&
+            searchHint === holdHint &&
+            !cancelled.connected &&
+            afterCancel.id === c.source.id,
+          measured: {
+            moved,
+            released,
+            holdHint,
+            stayed,
+            first,
+            last,
+            ends,
+            ended,
+            target,
+            holdProbe,
+            search,
+            searchHint,
+            cancelled,
+            afterCancel,
+          },
         };
       },
     );

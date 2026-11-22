@@ -117,6 +117,7 @@ const contextOf = (s: HostInputState, session: HostSession, e: KeySensor): KeyCo
   mode: session.mode,
   origin: session.origin,
   open: session.open,
+  onRelease: session.onRelease,
   field: e.fieldValue === null ? null : { text: e.fieldValue !== '', selected: e.fieldSelected },
   mac: s.mac,
   pageRows: e.pageRows,
@@ -188,10 +189,30 @@ function classifySensed(s: HostInputState, e: KeySensor): HostInputResult {
   const { session } = s;
   if (!session || session.quiet) return done(still(s));
   const facts = { ...e.facts, composing: s.sensor.composing || e.facts.composing || e.keyCode === 229 };
-  const classified = outside(classify(facts, contextOf(s, session, e)), e, session);
+  const context = contextOf(s, session, e);
+  const classified = outside(classify(facts, context), e, session);
+  // A row change can have kept the list in the worker before its frame reaches this host (C-TAP-12). Send any
+  // inferred release first, then let the worker accept Enter only if it kept the list.
+  if (
+    session.onRelease === 'keep' &&
+    session.visible &&
+    !session.open &&
+    session.mode === 'hold' &&
+    facts.type === 'keydown' &&
+    facts.key === 'Enter'
+  ) {
+    const prior =
+      classified.input?.kind === 'release' ? stepSession(s, { kind: 'send', input: classified.input }) : still(s);
+    return done(then(prior, (t) => finish(t, e, facts, classify(facts, { ...context, open: true }))));
+  }
   // A release that opens the list here, a missed one included (K-03), is sent first; the same event then means what
   // it means in the open list, so a first unheld Down moves and is swallowed (T-68).
-  if (classified.input?.kind === 'release' && session.quickTap === 'list' && !session.open) {
+  if (
+    classified.input?.kind === 'release' &&
+    session.quickTap === 'list' &&
+    session.onRelease === 'switch' &&
+    !session.open
+  ) {
     const released = stepSession(s, { kind: 'send', input: classified.input });
     return { ...released, resume: { kind: 'resume', phase: 'replay', sensed: e, facts, swallow: classified.swallow } };
   }

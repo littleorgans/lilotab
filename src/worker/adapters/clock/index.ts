@@ -1,9 +1,16 @@
 // Clock.now() and one timer handle per interaction and timer kind (03-components 3.2, 05-events 2.2, 2.3).
 
-import type { Clock, InteractionId, Millis, Sink, TimerKind, Timers } from '../../../core/index.ts';
+import type { Clock, EpochMs, InteractionId, Millis, Sink, TimerKind, Timers } from '../../../core/index.ts';
 
 // Monotonic within one worker boot; Date.now() never enters the core (05 2.2).
 export const clock: Clock = { now: () => performance.now() };
+
+// The one wall clock read, once per press, for display ages only; it never sets a due (05 2.2).
+export const wall = (): EpochMs => Date.now();
+
+// A browser time in ms since the epoch, or null when missing, zero, negative or not finite (C-HOLD-32).
+export const epochOf = (ms: number | undefined): EpochMs | null =>
+  ms !== undefined && Number.isFinite(ms) && ms > 0 ? ms : null;
 
 export type Settled<T> = { ok: true; value: T } | { ok: false; cause: 'timeout' | 'rejected' };
 

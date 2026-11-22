@@ -9,7 +9,9 @@ import { SEARCH_COMMAND } from '../../src/worker/names.ts';
 import { CTRL_SHIFT_E } from '../host-fixtures.ts';
 import { collect, installFakeChrome, settle, tab, win, type FakeBrowser } from './fake-chrome.ts';
 
-const CLOSED: ClosedTab[] = [{ sessionId: 's1', title: 'Closed', url: 'https://closed.example/', iconKey: null }];
+const CLOSED: ClosedTab[] = [
+  { sessionId: 's1', title: 'Closed', url: 'https://closed.example/', iconKey: null, closedAt: null },
+];
 
 // C-TAP-03, C-KEY-07, C-KEY-11, C-POP-09, C-KEY-12, C-SRCH-27; KB-01, KB-03
 test.each<{ name: string; shortcut?: string; act: (b: FakeBrowser) => void; steps: object[] }>([

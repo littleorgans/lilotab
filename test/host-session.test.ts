@@ -17,7 +17,7 @@ import {
   type SessionInput,
   type StartView,
 } from '../src/core/index.ts';
-import { keyFacts, pointer, startView } from './host-fixtures.ts';
+import { holdFrame, keyFacts, pointer, searchFrame, startView } from './host-fixtures.ts';
 
 const SOURCE: RowRef = { window: 0, row: 0 };
 const OTHER: RowRef = { window: 0, row: 1 };
@@ -26,16 +26,8 @@ const send = (input: HostInput): SessionInput => ({ kind: 'send', input });
 const frame = (f: Frame): SessionInput => ({ kind: 'message', raw: { t: 'frame', frame: f } });
 const startMessage = (start: StartView) => ({ kind: 'message', raw: { t: 'start', start, wake: null } }) as const;
 
-const hold = (row: number, open = false): Extract<Frame, { mode: 'hold' }> => ({
-  mode: 'hold',
-  visible: true,
-  open,
-  window: 0,
-  row,
-  gone: [],
-  copy: null,
-});
-const search = (results: RowRef[]): Frame => ({ mode: 'search', query: 'q', results, highlight: 0, copy: null });
+const hold = (row: number, open = false): Frame => holdFrame({ row, open });
+const search = (results: RowRef[]): Frame => searchFrame({ query: 'q', results, sort: 'best' });
 
 const RELEASE: HostInput = { kind: 'release', inferred: false };
 const ENTER: HostInput = { kind: 'enter' };
@@ -44,6 +36,9 @@ const LEAVE: HostInput = { kind: 'leaveSearch' };
 const post = (input: HostInput): SessionEffect => ({ kind: 'post', input });
 
 const LIST = startView({ quickTap: 'list' });
+// On release Keep list open (C-SET-30), the list shown.
+const KEEP = startView({ onRelease: 'keep' });
+const MOVE: HostInput = { kind: 'move', delta: 1 };
 const TOOLBAR = startView({ mode: 'search', binding: null, frame: search([SOURCE, OTHER]) });
 
 interface Row {
@@ -108,6 +103,58 @@ const rows: Row[] = [
     before: [frame(hold(1))],
     input: send({ kind: 'cancel', cause: 'key' }),
     effects: [{ kind: 'hide', fade: true }, post({ kind: 'cancel', cause: 'key' })],
+  },
+  // Keep list open (C-TAP-12)
+  {
+    name: 'C-TAP-12 T-80: keep, a move posts before the worker confirms a change of row',
+    start: KEEP,
+    before: [],
+    input: send(MOVE),
+    effects: [post(MOVE)],
+  },
+  {
+    name: 'C-TAP-12: an unmoved release with Quick tap Open tab list waits for the worker to close',
+    start: startView({ quickTap: 'list', onRelease: 'keep' }),
+    before: [],
+    input: send(RELEASE),
+    effects: [post(RELEASE)],
+  },
+  {
+    name: 'C-TAP-12 T-27: keep, a release on a list not yet kept only posts, never going quiet, ending by its target',
+    start: KEEP,
+    before: [frame(hold(1))],
+    input: send(RELEASE),
+    effects: [post(RELEASE)],
+    ending: 'cut',
+  },
+  {
+    name: 'C-TAP-12 T-80: keep, an open frame after a release, from a shortcut press, paints and keeps the list open',
+    start: KEEP,
+    before: [send(RELEASE)],
+    input: frame(hold(1, true)),
+    effects: [{ kind: 'paint', frame: hold(1, true) }, { kind: 'open' }],
+  },
+  {
+    name: 'C-TAP-12 T-80: a kept gesture that falls back to the popup takes focus on its first visible frame',
+    start: { ...KEEP, frame: holdFrame({ row: 1, open: true, visible: false }) },
+    before: [send(RELEASE)],
+    input: frame(hold(1, true)),
+    effects: [{ kind: 'paint', frame: hold(1, true) }, { kind: 'open' }],
+  },
+  {
+    name: 'C-TAP-12 T-67: keep, a search latch keeps it open, so back in hold a release only posts',
+    start: KEEP,
+    before: [send(LATCH), send(LEAVE)],
+    input: send(RELEASE),
+    effects: [post(RELEASE)],
+  },
+  {
+    name: 'C-TAP-12 T-70: keep, Enter in the kept list on another row posts and ends with a cut',
+    start: KEEP,
+    before: [frame(hold(1, true))],
+    input: send(ENTER),
+    effects: [post(ENTER)],
+    ending: 'cut',
   },
   // open frames (T-68)
   {
@@ -249,6 +296,12 @@ describe('TB-12 hostSession.step', () => {
     if (ending) expect(step.session?.ending).toBe(ending);
   });
 
+  it('C-TAP-12: Enter reaches the worker when release beats the kept frame', () => {
+    const released = sense(started(KEEP), keyFacts('Meta', { type: 'keyup' }));
+    expect(released.effects).toEqual([post(RELEASE)]);
+    expect(sense(released.state, keyFacts('Enter')).effects).toEqual([post(MISSED), SWALLOW, post(ENTER)]);
+  });
+
   // Rows only observable through the host sensor sequence (04-state-machine 7, "Missed release in list mode").
   it.each([
     {
@@ -281,7 +334,7 @@ describe('TB-12 hostSession.step', () => {
   });
 
   it('C-HOLD-11 K-15 C-SRCH-20: a held outside press cancels after local search and return before any frame', () => {
-    const hidden = started(startView({ frame: { ...hold(0), visible: false } }));
+    const hidden = started(startView({ frame: holdFrame({ visible: false }) }));
     const latched = sense(hidden, keyFacts('f', { meta: true }));
     const released = sense(latched.state, keyFacts('f', { type: 'keyup', meta: true }));
     const returned = sense(released.state, keyFacts('f', { meta: true }));
@@ -294,6 +347,21 @@ describe('TB-12 hostSession.step', () => {
     const esc = sense(typed, keyFacts('Escape'), true, 'abc');
     expect(esc.effects).toEqual([SWALLOW, { kind: 'clearField' }, post({ kind: 'query', text: '' })]);
     expect(esc.state.sensor.lastSent).toBe('');
+  });
+
+  it('C-TAP-12: Esc closes kept search after release even when the field has text', () => {
+    const latched = sense(started(KEEP), keyFacts('f', { meta: true }));
+    const released = sense(latched.state, keyFacts('Meta', { type: 'keyup' }), true, '');
+    const typed = hostInputStep(released.state, {
+      kind: 'field',
+      type: 'input',
+      trusted: true,
+      fieldValue: 'abc',
+      inputComposing: false,
+      owned: true,
+    });
+    const esc = sense(typed.state, keyFacts('Escape'), true, 'abc');
+    expect(esc.effects).toEqual([SWALLOW, post({ kind: 'cancel', cause: 'key' })]);
   });
 
   it('K-18 C-SRCH-14: IME Esc with key code 229 stays with the field before compositionstart', () => {

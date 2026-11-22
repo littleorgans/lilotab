@@ -11,6 +11,7 @@ export interface Settings {
   holdDelayMs: 0 | 50 | 100 | 200; // C-SET-04
   tabOrder: 'recent' | 'window'; // C-SET-05
   listSurface: 'overlay' | 'popup'; // C-SET-02
+  onRelease: 'switch' | 'keep'; // C-SET-30 "On release"
   closedTabs: 'off' | 'on'; // C-SET-22
   tabCountBadge: 'off' | 'on'; // C-SET-23
   theme: 'dark' | 'light' | 'system'; // C-SET-06
@@ -46,6 +47,7 @@ export const SCHEMA: {
   holdDelayMs: { values: [0, 50, 100, 200], default: 50, section: 'quickTap' },
   tabOrder: { values: ['recent', 'window'], default: 'recent', section: 'tabList' },
   listSurface: { values: ['overlay', 'popup'], default: 'overlay', section: 'tabList' },
+  onRelease: { values: ['switch', 'keep'], default: 'switch', section: 'tabList' },
   closedTabs: { values: ['off', 'on'], default: 'off', section: 'search' },
   tabCountBadge: { values: ['off', 'on'], default: 'off', section: 'toolbar' },
   theme: { values: ['dark', 'light', 'system'], default: 'dark', section: 'appearance' },

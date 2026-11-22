@@ -10,6 +10,7 @@ import { clock, createTimers, settleBy, type Settled } from './adapters/clock/in
 import { registerEntry } from './adapters/entry/index.ts';
 import { createHostLink } from './adapters/host-link/index.ts';
 import { createIcons, deliverIcons } from './adapters/icons/index.ts';
+import { createKeepWarm } from './adapters/keep-warm/index.ts';
 import { recentlyClosed, restore } from './adapters/sessions/index.ts';
 import { createSaver, registerClear, restrictLocal, sessionStore, settingsStore } from './adapters/storage/index.ts';
 import { createTabs } from './adapters/tabs/index.ts';
@@ -27,6 +28,7 @@ const hostLink = createHostLink(overlayFile);
 const icons = createIcons();
 const saver = createSaver(sessionStore);
 const badge = createBadge(liveFacts);
+const keepWarm = createKeepWarm();
 
 // Effects in list order, each initiated and never awaited (03 4.1).
 function perform(effects: readonly Effect[]): void {
@@ -112,8 +114,13 @@ async function initGate(): Promise<void> {
   );
   model = booted.model;
   perform(booted.effects);
+  void keepWarm.update(model);
 }
 
+// Wake the worker to seed history (C-REC-09) and clear ownership from the previous browser session (06 3).
+chrome.runtime.onStartup.addListener(() => {
+  void keepWarm.onStartup();
+});
 const gate = initGate().catch(fault);
 if (timing) {
   void gate.then(() => {
@@ -128,6 +135,9 @@ const ingress = createIngress(clock, gate, (event) => {
   const next = step(model, event);
   model = next.model;
   perform(next.effects);
+  if (model.recents !== before.recents || model.settings !== before.settings) {
+    void keepWarm.update(model, 'source' in event ? event.source.windowId : undefined);
+  }
   timing?.stepped(before, event, next);
 });
 const timers = createTimers(ingress);
@@ -154,5 +164,3 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
     void chrome.tabs.create({ url: chrome.runtime.getURL(WELCOME_PAGE) }).catch(fault);
   }
 });
-// Registered only so the worker evaluates at browser start and the init gate seeds history (C-REC-09).
-chrome.runtime.onStartup.addListener(() => undefined);

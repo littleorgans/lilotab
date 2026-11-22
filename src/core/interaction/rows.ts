@@ -4,7 +4,7 @@ import type { HostInput } from '../protocol/index.ts';
 import { isNormal, reconcile } from '../recents/index.ts';
 import { chooseHost } from '../settings/index.ts';
 import { buildSnapshot, listedTabs, lookOf, rowAt, rowOf } from '../snapshot/index.ts';
-import type { Millis, TabRef } from '../types.ts';
+import { sameRow, type Millis, type TabRef } from '../types.ts';
 import {
   cancel,
   cancelTimer,
@@ -23,10 +23,12 @@ import {
   closable,
   highlightOf,
   holdMove,
+  isHoldMove,
   moveHighlight,
   searchMove,
   searchOf,
   stepCursor,
+  toggleSort,
   unlatched,
   withGone,
 } from './selection.ts';
@@ -45,6 +47,11 @@ const sameTab = (a: TabRef, b: TabRef) => a.tabId === b.tabId && a.windowId === 
 
 const isPending = (i: Interaction) => i.state === 'overlayPending' || i.state === 'popupPending';
 
+// Keep list open latches on the first change of row or a search latch. Later moves keep the flag (C-TAP-12, T-80).
+const keepOpen = (i: Interaction): Interaction => (i.onRelease === 'keep' && !i.open ? { ...i, open: true } : i);
+const afterMove = (before: Interaction, after: Interaction): Interaction =>
+  sameRow(before.cursor, after.cursor) ? after : keepOpen(after);
+
 // ---- presses
 
 // T-02 to T-04, T-55 and T-79: reconcile, freeze the snapshot, open attempt 1 with the start view. The toolbar icon
@@ -55,7 +62,7 @@ function startGesture(run: Run, e: Press): void {
   setRecents(run, reconcile(run.model.recents, e.live));
   const { settings } = run.model;
   const source = { tabId: e.source.tabId, windowId: e.source.windowId };
-  const snapshot = buildSnapshot(run.model.recents, e.live, settings, source, e.closed);
+  const snapshot = buildSnapshot(run.model.recents, e.live, settings, source, e.closed, e.wall);
   if (!snapshot) return;
   const host = e.kind === 'toolbarClicked' ? 'popup' : chooseHost(e.source, settings);
   const id = nextId(run);
@@ -66,6 +73,7 @@ function startGesture(run: Run, e: Press): void {
     binding: e.binding,
     look: lookOf(settings),
     quickTap: settings.quickTap,
+    onRelease: settings.onRelease,
     snapshot,
     state: host === 'overlay' ? 'overlayPending' : 'popupPending',
     attempt: { id: `${id}:1`, host },
@@ -73,9 +81,10 @@ function startGesture(run: Run, e: Press): void {
     away: false,
     cursor: snapshot.initial,
     history: snapshot.stack !== null,
-    search: entry === 'search' ? searchOf({ snapshot, gone: [] }, '', snapshot.initial) : null,
+    search: entry === 'search' ? searchOf({ snapshot, gone: [], sort: 'default' }, '', snapshot.initial) : null,
     open: false,
     gone: [],
+    sort: 'default', // every list starts in its default order (C-HOLD-29)
   };
   // Open tab list has no dwell: a ready host shows the list at once (T-03, T-04, C-HOLD-24).
   if (entry === 'shortcut' && i.quickTap === 'flip') i = startTimer(run, i, 'dwell', e.at + settings.holdDelayMs);
@@ -95,9 +104,12 @@ function launch(run: Run, i: Interaction): void {
 // A press from the live interaction's tab steps it (C-KEY-04, C-HOLD-21).
 function stepPress(run: Run, i: Interaction, at: Millis): void {
   if (isPending(i) || i.state === 'ready') {
-    if (i.entry === 'shortcut') setInteraction(run, stepCursor(i, 1)); // T-15
+    if (i.entry !== 'shortcut') return;
+    const stepped = afterMove(i, stepCursor(i, 1)); // T-15
+    if (stepped.open && i.state === 'ready') show(run, cancelTimer(run, stepped, 'dwell'), at); // T-80
+    else setInteraction(run, stepped);
   } else if (i.state === 'holding') {
-    publish(run, stepCursor(i, 1), at, true); // T-22
+    publish(run, afterMove(i, stepCursor(i, 1)), at, true); // T-22, T-80
   } else {
     const moved = moveHighlight(i, 1);
     publish(run, moved, at, moved !== i); // T-37, T-40
@@ -149,10 +161,10 @@ function hostReady(run: Run, i: Interaction, at: Millis): void {
   const next = cancelTimer(run, i, 'hostDeadline');
   if (next.entry === 'search') {
     publish(run, { ...next, state: 'search' }, at, false); // T-61
-  } else if (next.due.dwell !== null) {
+  } else if (next.due.dwell !== null && !next.open) {
     setInteraction(run, { ...next, state: 'ready' }); // T-06, T-09
   } else {
-    show(run, next, at); // T-07, T-10
+    show(run, cancelTimer(run, next, 'dwell'), at); // T-07, T-10; kept while pending (T-80)
   }
   loadIcons(run, i);
 }
@@ -182,9 +194,11 @@ function onReadyInput(run: Run, i: Interaction, input: HostInput, at: Millis): v
   } else if (input.kind === 'cancel') {
     cancel(run, i); // T-20
   } else if (input.kind === 'latchSearch') {
-    latch(run, cancelTimer(run, i, 'dwell'), at); // T-18
-  } else if (input.kind === 'step' || input.kind === 'move' || input.kind === 'window') {
-    show(run, holdMove(cancelTimer(run, i, 'dwell'), input), at); // T-17
+    latch(run, keepOpen(cancelTimer(run, i, 'dwell')), at); // T-18, T-80
+  } else if (isHoldMove(input)) {
+    show(run, afterMove(i, holdMove(cancelTimer(run, i, 'dwell'), input)), at); // T-17, T-80
+  } else if (input.kind === 'sort') {
+    show(run, afterMove(i, toggleSort(cancelTimer(run, i, 'dwell'))), at); // T-83, T-80
   }
 }
 
@@ -196,16 +210,18 @@ function closeRow(run: Run, i: Interaction, at: Millis): void {
     return;
   }
   emit(run, { kind: 'closeTab', tabId: target.tabId });
-  publish(run, withGone(i, target.ref), at, true);
+  publish(run, afterMove(i, withGone(i, target.ref)), at, true); // T-80
 }
 
 function onHoldInput(run: Run, i: Interaction, input: HostInput, at: Millis): void {
   switch (input.kind) {
     case 'step': // T-22
     case 'move': // T-23
+    case 'jump':
+    case 'page': // T-84
     case 'window': {
-      // T-24, T-25
-      const moved = holdMove(i, input);
+      // T-24, T-25, T-80
+      const moved = afterMove(i, holdMove(i, input));
       publish(run, moved, at, moved !== i);
       break;
     }
@@ -214,7 +230,7 @@ function onHoldInput(run: Run, i: Interaction, input: HostInput, at: Millis): vo
       break;
     case 'release':
       if (i.open) break; // T-69
-      if (i.quickTap === 'list' && rowAt(i.snapshot, i.cursor)?.tabId === i.source.tabId) {
+      if (i.onRelease === 'switch' && i.quickTap === 'list' && rowAt(i.snapshot, i.cursor)?.tabId === i.source.tabId) {
         publish(run, { ...i, open: true }, at, true); // T-68
       } else {
         commit(run, i, i.cursor); // T-27, T-28
@@ -229,11 +245,14 @@ function onHoldInput(run: Run, i: Interaction, input: HostInput, at: Millis): vo
     case 'cancel': // T-29, T-30
       cancel(run, i);
       break;
-    case 'latchSearch': // T-31
-      latch(run, i, at);
+    case 'latchSearch': // T-31, T-80
+      latch(run, keepOpen(i), at);
       break;
-    case 'close': // T-74, T-76
+    case 'close': // T-74, T-76, T-80
       closeRow(run, i, at);
+      break;
+    case 'sort': // T-81, T-80
+      publish(run, afterMove(i, toggleSort(i)), at, true);
       break;
     default: // ping T-73, query and leaveSearch: due.idle stays
       break;
@@ -258,6 +277,9 @@ function onSearchInput(run: Run, i: Interaction, input: HostInput, at: Millis): 
     }
     case 'close': // T-75, T-76
       closeRow(run, i, at);
+      break;
+    case 'sort': // T-82
+      publish(run, toggleSort(i), at, true);
       break;
     case 'enter': {
       // T-38, T-40, T-78

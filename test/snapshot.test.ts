@@ -3,6 +3,8 @@
 import { describe, expect, it } from 'vite-plus/test';
 import {
   DEFAULTS,
+  TITLE_MAX,
+  ageOf,
   buildSnapshot,
   candidates,
   copyText,
@@ -20,6 +22,8 @@ import {
 } from '../src/core/index.ts';
 import { close, focus, history, live, tab, use, win, type Step } from './data-fixtures.ts';
 
+const WALL = 1_800_000_000_000; // the press's wall stamp
+
 // A press as the worker makes it: reconcile with the press's live facts, then build (T-03).
 function press(
   r: Recents,
@@ -30,7 +34,7 @@ function press(
 ): Snapshot {
   const w = facts.windows[0];
   const from = source ?? { tabId: w?.tabs.find((t) => t.active)?.tabId ?? -1, windowId: w?.windowId ?? -1 };
-  const s = buildSnapshot(reconcile(r, facts), facts, { ...DEFAULTS, ...settings }, from, closed);
+  const s = buildSnapshot(reconcile(r, facts), facts, { ...DEFAULTS, ...settings }, from, closed, WALL);
   if (!s) throw new Error('no snapshot');
   return s;
 }
@@ -48,6 +52,11 @@ const outline = (s: Snapshot) => ({
 
 // One window, bar order 1 to 5, tab 3 active.
 const L1 = live(win(1, 3, 1, 2, 3, 4, 5));
+// One window, tab 3 active; tabs 2 and 5 last active at one time, tabs 4 and 6 without a time.
+const timed = (tabId: number, lastAccessed: number | null) => tab(tabId, { lastAccessed });
+const LT = live(
+  win(1, 3, timed(1, 3000), timed(2, 2000), timed(3, 100), timed(4, null), timed(5, 2000), timed(6, null)),
+);
 // Two windows; global order 12, 22, 21, 11; tab 13 never used; window 1 focused last.
 const L2 = live(win(1, 12, 11, 12, 13), win(2, 22, 21, 22));
 const H2 = history(L2, use(11, 1), use(12, 1), focus(2), use(21, 2), use(22, 2), focus(1));
@@ -55,10 +64,10 @@ const H2 = history(L2, use(11, 1), use(12, 1), focus(2), use(21, 2), use(22, 2),
 describe('TB-04 snapshot.build', () => {
   it.each<{ name: string; r: Recents; facts: LiveFacts; settings?: Partial<Settings>; expected: object }>([
     {
-      name: 'C-HOLD-02 Recent order: current tab, then by use, then never used in tab bar order',
-      r: history(L1, use(5, 1), use(2, 1), use(3, 1)),
-      facts: L1,
-      expected: { rows: [[3, 2, 5, 1, 4]] },
+      name: 'C-HOLD-02 Recent order: current tab, then by last active time, ties by use, then untimed by use and tab bar order',
+      r: history(LT, use(5, 1), use(2, 1), use(4, 1), use(3, 1)),
+      facts: LT,
+      expected: { rows: [[3, 1, 2, 5, 4, 6]] },
     },
     {
       name: 'C-HOLD-03 Window order lists the tab bar order',
@@ -147,10 +156,18 @@ describe('TB-04 snapshot.build', () => {
   const L3 = live(win(1, 11, 11, 12, 13), win(2, 22, 21, 22, 23));
   const H3 = history(L3, use(12, 1), use(11, 1), focus(2));
   const from2 = { tabId: 22, windowId: 2 };
-  it.each<{ name: string; settings: Partial<Settings>; stack: number[] | null }>([
+  // L3 with browser times against tab bar order: Recent rows list 13 before 12 and 23 before 21.
+  const L3T = live(win(1, 11, 11, 12, timed(13, 9000)), win(2, 22, timed(21, 1000), 22, timed(23, 5000)));
+  it.each<{ name: string; settings: Partial<Settings>; facts?: LiveFacts; stack: number[] | null }>([
     {
       name: 'C-WIN-06 All windows: steps walk the global recent order, never used tabs last in strip then tab bar order',
       settings: { quickScope: 'all' },
+      stack: [22, 11, 12, 21, 23, 13],
+    },
+    {
+      name: 'C-WIN-06 All windows, Recent rows by browser time: steps keep seq, strip and tab bar order',
+      settings: { quickScope: 'all', tabOrder: 'recent' },
+      facts: L3T,
       stack: [22, 11, 12, 21, 23, 13],
     },
     {
@@ -163,14 +180,14 @@ describe('TB-04 snapshot.build', () => {
       settings: { quickScope: 'all', quickTap: 'list' },
       stack: null,
     },
-  ])('$name', ({ settings, stack }) => {
-    expect(outline(press(H3, L3, settings, from2)).stack).toEqual(stack);
+  ])('$name', ({ settings, facts = L3, stack }) => {
+    expect(outline(press(H3, facts, settings, from2)).stack).toEqual(stack);
   });
 
   // Read at the press, most recent first; ranking finds them in the closed window after the listed ones.
   const CLOSED: ClosedTab[] = [
-    { sessionId: 's9', title: 'Closed last', url: 'https://last.example/', iconKey: null },
-    { sessionId: 's8', title: 'Closed before', url: 'https://before.example/', iconKey: null },
+    { sessionId: 's9', title: 'Closed last', url: 'https://last.example/', iconKey: null, closedAt: null },
+    { sessionId: 's8', title: 'Closed before', url: 'https://before.example/', iconKey: null, closedAt: null },
   ];
   it.each<{ name: string; settings: Partial<Settings>; closed: object[] }>([
     {
@@ -190,9 +207,18 @@ describe('TB-04 snapshot.build', () => {
 
   it('C-SRCH-27 C-SRCH-26 recently closed rows reach the host as rows, and copy as an open row does', () => {
     const s = press(H2, L2, { closedTabs: 'on' }, undefined, CLOSED);
+    const plain = {
+      pinned: false,
+      audible: false,
+      sleeping: false,
+      icon: null,
+      noise: { lead: 0, tail: null },
+      age: null,
+      dup: null,
+    };
     expect(listView(s).closed).toEqual([
-      { title: 'Closed last', site: 'last.example', pinned: false, audible: false, icon: null },
-      { title: 'Closed before', site: 'before.example', pinned: false, audible: false, icon: null },
+      { title: 'Closed last', site: 'last.example', ...plain },
+      { title: 'Closed before', site: 'before.example', ...plain },
     ]);
     expect(copyText(s, { window: 2, row: 1 })).toEqual({ title: 'Closed before', url: 'https://before.example/' });
   });
@@ -231,5 +257,70 @@ describe('TB-04 snapshot.build', () => {
     },
   ])('$name', ({ facts, steps = [], rows }) => {
     expect(listView(press(history(facts, ...steps), facts)).windows[0]?.rows).toMatchObject(rows);
+  });
+
+  // Ages from the press's wall stamp: floored once in the largest unit, weeks held at 4 (C-HOLD-32).
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+  it.each<{ name: string; ago: number | null; age: object | null }>([
+    { name: '59 s shows none', ago: 59_000, age: null },
+    { name: '60 s is 1m', ago: MIN, age: { n: 1, unit: 'm' } },
+    { name: '59 min 59 s is 59m', ago: HOUR - 1000, age: { n: 59, unit: 'm' } },
+    { name: '1 h is 1h', ago: HOUR, age: { n: 1, unit: 'h' } },
+    { name: '23 h 59 min is 23h', ago: DAY - MIN, age: { n: 23, unit: 'h' } },
+    { name: '24 h is 1d', ago: DAY, age: { n: 1, unit: 'd' } },
+    { name: '7 d is 1w', ago: 7 * DAY, age: { n: 1, unit: 'w' } },
+    { name: '27 d is 3w', ago: 27 * DAY, age: { n: 3, unit: 'w' } },
+    { name: '28 d is 4w, shown 4w+', ago: 28 * DAY, age: { n: 4, unit: 'w' } },
+    { name: 'past 4 weeks stays 4w', ago: 120 * 7 * DAY, age: { n: 4, unit: 'w' } },
+    { name: 'a time in the future shows none', ago: -MIN, age: null },
+    { name: 'no time shows none', ago: null, age: null },
+  ])('C-HOLD-32 age: $name', ({ ago, age }) => {
+    expect(ageOf(WALL, ago === null ? null : WALL - ago)).toEqual(age);
+  });
+
+  it("C-HOLD-32 no age on the source tab only; a recently closed row's age runs from its closing", () => {
+    const facts = live(
+      win(1, 1, tab(1, { lastAccessed: WALL - 2 * MIN }), tab(2, { lastAccessed: WALL - 3 * HOUR })),
+      win(2, 3, tab(3, { lastAccessed: WALL - 10 * MIN }), tab(4, { lastAccessed: WALL - 2 * DAY })),
+    );
+    const closed = [{ ...CLOSED[0], closedAt: WALL - 5 * MIN }] as ClosedTab[];
+    const view = listView(press(history(facts), facts, { closedTabs: 'on' }, undefined, closed));
+    expect([...view.windows.map((w) => w.rows.map((r) => r.age)), view.closed.map((r) => r.age)]).toEqual([
+      [null, { n: 3, unit: 'h' }],
+      [
+        { n: 10, unit: 'm' },
+        { n: 2, unit: 'd' },
+      ],
+      [{ n: 5, unit: 'm' }],
+    ]);
+  });
+
+  it('C-HOLD-33 open rows of one address less its fragment share a group across windows; empty addresses and closed rows never count', () => {
+    const at = (id: number, url: string) => tab(id, { url });
+    const facts = live(
+      win(1, 1, at(1, 'https://a.example/x#top'), at(2, 'https://b.example/'), at(3, ''), at(7, 'https://c.example/')),
+      win(2, 4, at(4, 'https://a.example/x'), at(5, ''), at(6, 'https://b.example/#y')),
+    );
+    const closed = [{ ...CLOSED[0], url: 'https://c.example/' }] as ClosedTab[];
+    const view = listView(press(history(facts), facts, { closedTabs: 'on' }, undefined, closed));
+    expect([...view.windows.map((w) => w.rows.map((r) => r.dup)), view.closed.map((r) => r.dup)]).toEqual([
+      [0, 1, null, null],
+      [0, null, 1],
+      [null],
+    ]);
+  });
+
+  it.each([
+    { name: 'kept for an uncut title', title: '(3) Methods - Wikipedia', noise: { lead: 4, tail: 11 } },
+    {
+      name: 'cut to the count for a cut title',
+      title: `(3) ${'x'.repeat(TITLE_MAX)} - Wikipedia`,
+      noise: { lead: 4, tail: null },
+    },
+  ])('C-HOLD-34 title noise is $name', ({ title, noise }) => {
+    const facts = live(win(1, 1, tab(1, { title, url: 'https://en.wikipedia.org/' }), 2));
+    expect(listView(press(history(facts), facts)).windows[0]?.rows[0]?.noise).toEqual(noise);
   });
 });

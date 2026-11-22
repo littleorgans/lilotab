@@ -2,7 +2,7 @@
 import { pause, until } from './support.mjs';
 import { HELD } from './chrome.mjs';
 import { MODIFIER_BITS } from '../key-input.ts';
-import { state, active, thrown } from './behavior.mjs';
+import { state, closed, active, thrown } from './behavior.mjs';
 import { withVerifier } from './fixtures.mjs';
 import { near } from './look.mjs';
 import { pageScenarios } from './pages.mjs';
@@ -20,8 +20,6 @@ async function asPage(c, expression) {
   if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text);
   return r.result.value;
 }
-// The list once its cancel fade ends, or as it stands after a second.
-const closed = (c, h) => c.waitRemoved(h).catch(() => state(c, h));
 const pageInput = (c, value) =>
   c.sourcePage.evaluate((v) => {
     const i = document.querySelector('#page-input');
@@ -77,7 +75,8 @@ function rowDetails() {
     const title = row.querySelector('.title'),
       site = row.querySelector('.site'),
       marker = row.querySelector('.marker'),
-      icon = row.querySelector('.icon'),
+      icon = row.querySelector('img.icon'),
+      letter = row.querySelector('.letter'),
       pin = row.querySelector('svg.pin'),
       sound = row.querySelector('svg.sound');
     return {
@@ -90,12 +89,21 @@ function rowDetails() {
       marker:
         marker && getComputedStyle(marker).display !== 'none'
           ? {
-              text: marker.textContent,
+              // The window's face: its icon's address or letter, and its number where cells share one (C-SRCH-07).
+              text: (marker.querySelector('img')?.src ?? '') + marker.textContent,
               current: marker.classList.contains('current'),
-              bg: getComputedStyle(marker).backgroundColor,
+              visible: getComputedStyle(marker).visibility !== 'hidden',
             }
           : null,
-      icon: icon?.localName === 'img' ? { src: icon.src, width: icon.naturalWidth } : null,
+      icon: icon
+        ? {
+            src: icon.src,
+            width: icon.naturalWidth,
+            box: [rect(icon).width, rect(icon).height],
+            bare: icon.parentElement === row,
+          }
+        : null,
+      letter: letter?.textContent ?? null,
       pin: pin ? rect(pin).x : null,
       sound: sound ? rect(sound).x : null,
       closedMark: !!row.querySelector('svg.closed'),
@@ -104,6 +112,25 @@ function rowDetails() {
   });
 }
 const rows = async (c, h) => (await c.panelCall(h, rowDetails)) ?? [];
+
+// Each decoded icon of the rows and strip cells: its box and whether it sits bare in its row or cell (C-ICON-08); and
+// the OS colour scheme the panel sees.
+function iconBoxes() {
+  return {
+    os: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+    icons: [...this.querySelectorAll('.list:not(.copy) img.icon, .strip img.icon')]
+      .filter((img) => img.naturalWidth > 0)
+      .map((img) => {
+        const { width, height } = img.getBoundingClientRect();
+        return {
+          strip: !!img.closest('.strip'),
+          width,
+          height,
+          bare: img.parentElement.matches('[role="option"], .cell'),
+        };
+      }),
+  };
+}
 
 // The centre pixel's colour of each row icon, decoded in the host.
 function iconColours() {
@@ -179,6 +206,7 @@ function textColours() {
     panel: style(this).backgroundColor,
     text: style(plain.querySelector('.title')).color,
     secondary: style(plain.querySelector('.site')).color,
+    faint: style(this.querySelector('.cell:not([aria-selected="true"]) .count')).color,
     selected: style(chosen).backgroundColor,
     selectedText: style(chosen.querySelector('.title')).color,
     selectedSecondary: style(chosen.querySelector('.site')).color,
@@ -463,6 +491,61 @@ export function contractScenarios(c, e, add) {
         }),
     );
 
+  // The sort key in each mode it has: held key plus S in the overlay's closed hold, where the page would otherwise see
+  // it and Chrome save the page; held key plus S in overlay search; the platform chord in a toolbar popup with no
+  // shortcut. Headless input skips browser accelerators, so Save Page itself is M-31's (C-KEY-06).
+  const named = (x) => x.rows.map((r) => r.title);
+  const byTitle = (titles) => [...titles].sort((a, b) => a.localeCompare(b, 'en'));
+  const SORTED = 'Sorted by Title';
+  add(
+    'AC-16-sort-key',
+    "Held key plus S in the overlay's closed hold reorders the rows by title, the notice reads Sorted by Title and the page's key listener logs nothing; in overlay search it leaves the field empty and the notice reads Sorted by Title; in a toolbar popup with no shortcut, Cmd+S (Ctrl+S off macOS) sorts (C-HOLD-29, C-HOLD-30, C-SRCH-29, C-POP-09, C-KEY-06)",
+    async () => {
+      const titled = (h) =>
+        until(async () => {
+          const x = await state(c, h);
+          return x.notice === SORTED && x;
+        }).catch(() => state(c, h));
+      const h = await c.open('overlay'),
+        before = await state(c, h);
+      await c.sourcePage.evaluate(() => (window.__h1Page = []));
+      await c.key(h, 's', HELD.modifier);
+      const hold = await titled(h),
+        page = await c.sourcePage.evaluate(() => window.__h1Page);
+      await c.cancel(h);
+      const s = await c.open('overlay');
+      await c.key(s, 'f', HELD.modifier);
+      await pause(120);
+      await c.key(s, 's', HELD.modifier);
+      const search = await titled(s);
+      await c.cancel(s);
+      await c.scenario.shortcut('');
+      const p = await c.open('popup', { via: 'toolbar' });
+      await c.key(p, 's', copyModifier);
+      const popup = await titled(p);
+      return {
+        pass:
+          before.notice === '' &&
+          named(hold).join() === byTitle(named(before)).join() &&
+          named(hold).join() !== named(before).join() &&
+          hold.notice === SORTED &&
+          page.length === 0 &&
+          search.search &&
+          search.fieldText === '' &&
+          search.notice === SORTED &&
+          popup.search &&
+          popup.fieldText === '' &&
+          popup.notice === SORTED,
+        measured: {
+          before: { rows: named(before), notice: before.notice },
+          hold: { rows: named(hold), notice: hold.notice },
+          page,
+          search: { fieldText: search.fieldText, notice: search.notice, rows: named(search) },
+          popup: { fieldText: popup.fieldText, notice: popup.notice, rows: named(popup) },
+        },
+      };
+    },
+  );
   add(
     'AC-17-closed-root',
     'Page script, hooking attachShadow and DOM mutations before the press, finds no title, address or icon address of the search list (C-HOLD-20, C-ICON-02)',
@@ -596,7 +679,7 @@ export function contractScenarios(c, e, add) {
   });
   add(
     'AC-22-rows-window-markers',
-    'Search rows of one window share a marker and the current window marker looks different (C-SRCH-07)',
+    'Search rows of another window share a marker, distinct between windows, and the current window shows none (C-SRCH-07)',
     async () => {
       const h = await c.open('overlay');
       await c.key(h, 'f', HELD.modifier);
@@ -607,9 +690,9 @@ export function contractScenarios(c, e, add) {
       return {
         pass:
           current.length === SOURCE_TABS.length &&
-          current.every((r) => r.marker?.text === '1' && r.marker.current) &&
+          current.every((r) => r.marker?.current && !r.marker.visible) &&
           others.length > 1 &&
-          others.every((r) => r.marker && !r.marker.current && r.marker.bg !== current[0].marker.bg) &&
+          others.every((r) => r.marker?.visible && !r.marker.current) &&
           new Set(others.map((r) => r.marker.text)).size === others.length,
         measured: { shown },
       };
@@ -660,7 +743,7 @@ export function contractScenarios(c, e, add) {
           row?.closedMark &&
           !row.marker &&
           row.selected &&
-          row.label === 'H1 Gone, Recently closed' &&
+          row.label === 'H1 Gone, 127.0.0.1, Recently closed' &&
           !after.connected &&
           reopened.length === 1,
         measured: {
@@ -674,18 +757,23 @@ export function contractScenarios(c, e, add) {
   );
   add(
     'AC-22-rows-icon-moves-nothing',
-    'A row with its icon and rows with the placeholder keep the same title position and height (C-ICON-04)',
+    'A row with its icon, a dark one bare at 16 px in the dark theme, and rows with their letter tile keep the same title position and height (C-ICON-03, C-ICON-04, C-ICON-08)',
     () =>
-      withIconTab(c, async () => {
+      withIconTab(c, async ({ setIcon }) => {
+        await setIcon('#101010');
         const h = await c.open('overlay');
         await pause(120); // past the open motion's scale
         const shown = await until(async () => {
           const x = await rows(c, h);
-          return x.some((r) => r.icon) && x;
+          return x.some((r) => r.icon?.width) && x;
         });
         return {
           pass:
             shown.some((r) => !r.icon) &&
+            shown.every((r) => (r.icon ? r.letter === null : r.letter !== null)) &&
+            shown
+              .filter((r) => r.icon?.width)
+              .every((r) => r.icon.bare && near(r.icon.box[0], 16, 0.5) && near(r.icon.box[1], 16, 0.5)) &&
             shown.every((r) => near(r.titleX, shown[0].titleX, 0.5) && near(r.height, shown[0].height, 0.5)),
           measured: { shown },
         };
@@ -745,22 +833,29 @@ export function contractScenarios(c, e, add) {
   );
   add(
     'AC-23-semantics-names',
-    'Row names hold the title, "Playing sound" right after it, the pinned state and, in search, the window (C-A11Y-02, C-HOLD-25)',
+    'Row names hold the title, in search the domain after it, then "Playing sound", the pinned state and, in search, the window. Strip cells name their window and tab count, and audible windows add "Playing sound" (C-A11Y-02, C-HOLD-25, C-WIN-17)',
     async () => {
       await c.scenario.audible();
       const h = await c.open('overlay'),
-        hold = await rows(c, h);
+        hold = await rows(c, h),
+        cells = await c.panelCall(h, function () {
+          return [...this.querySelectorAll('.strip [role="tab"]')].map((x) => x.getAttribute('aria-label'));
+        });
       await c.key(h, 'f', HELD.modifier);
       await pause(120);
       const search = await rows(c, h);
       const byTitle = (x, t) => x.find((r) => r.title === t)?.label;
       return {
         pass:
+          cells[0] === 'This window, 3 tabs, Playing sound' &&
+          cells.slice(1).every((x) => /^Window \d+, 1 tab$/.test(x)) &&
           byTitle(hold, 'H1 Audio') === 'H1 Audio, Playing sound, Pinned' &&
           byTitle(hold, 'H1 Other') === 'H1 Other' &&
-          byTitle(search, 'H1 Audio') === 'H1 Audio, Playing sound, Pinned, This window' &&
-          search.filter((r) => !SOURCE_TABS.includes(r.title)).every((r) => r.label.startsWith(`${r.title}, Window `)),
-        measured: { hold, search },
+          byTitle(search, 'H1 Audio') === 'H1 Audio, 127.0.0.1, Playing sound, Pinned, This window' &&
+          search
+            .filter((r) => !SOURCE_TABS.includes(r.title))
+            .every((r) => r.label.startsWith(`${r.title}, 127.0.0.1, Window `)),
+        measured: { cells, hold, search },
       };
     },
   );
@@ -862,23 +957,23 @@ export function contractScenarios(c, e, add) {
     for (const theme of ['dark', 'light'])
       add(
         `AC-25-contrast-${flavor}-${theme}`,
-        `${theme} ${flavor}: text, secondary text and the highlighted row reach 4.5:1${flavor === 'overlay' ? ' over a white and a black page' : ''} (C-A11Y-06, C-HOLD-26)`,
+        `${theme} ${flavor}: text, secondary and faint text and the highlighted row's text reach 4.5:1${flavor === 'overlay' ? ' over a white and a black page' : ''} (C-A11Y-06, C-HOLD-26, C-HOLD-36)`,
         async () => {
           const h = await c.open(flavor, { theme }),
             colours = await c.panelCall(h, textColours);
           const backdrops = flavor === 'overlay' ? ['rgb(255, 255, 255)', 'rgb(0, 0, 0)'] : ['rgb(0, 0, 0)'];
+          // The selected fill is translucent, so its row sits on the panel over the page.
           const ratios = backdrops.flatMap((page) => {
-            const panel = over(colours.panel, page);
+            const panel = over(colours.panel, page),
+              selected = over(colours.selected, panel);
             return [
               { page, pair: 'text', ratio: contrast(over(colours.text, panel), panel) },
               { page, pair: 'secondary', ratio: contrast(over(colours.secondary, panel), panel) },
+              { page, pair: 'faint', ratio: contrast(over(colours.faint, panel), panel) },
+              { page, pair: 'selectedText', ratio: contrast(over(colours.selectedText, selected), selected) },
+              { page, pair: 'selectedSecondary', ratio: contrast(over(colours.selectedSecondary, selected), selected) },
             ];
           });
-          const selected = over(colours.selected, 'rgb(0, 0, 0)');
-          ratios.push(
-            { pair: 'selectedText', ratio: contrast(over(colours.selectedText, selected), selected) },
-            { pair: 'selectedSecondary', ratio: contrast(over(colours.selectedSecondary, selected), selected) },
-          );
           return { pass: ratios.every((r) => r.ratio >= 4.5), measured: { colours, ratios } };
         },
       );
@@ -892,6 +987,43 @@ export function contractScenarios(c, e, add) {
     const large = await size(await c.open('overlay', { textSize: 'large' }));
     return { pass: large > normal, measured: { normal, large } };
   });
+  // A near black icon, which an added plate once marked in the dark theme. The list opens from its tab, granted for the
+  // overlay, so the source window's row and strip cell both show it; that reorders recents.
+  for (const flavor of ['overlay', 'popup'])
+    add(
+      `AC-25-icon-bare-${flavor}`,
+      `${flavor}: a dark icon shows bare at 16 px in rows and strip cells in Dark and Light against the opposite OS, and in Match system across an OS change (C-ICON-08, C-SET-06)`,
+      () =>
+        withIconTab(c, async ({ tab, setIcon }) => {
+          c.scenario.reorders();
+          await setIcon('#101010');
+          if (flavor === 'overlay') await c.grant(tab.id);
+          const seen = [];
+          const look = async (h, theme, os) => {
+            await c.emulate(h.s, false, os);
+            const x = await until(async () => {
+              const y = await c.panelCall(h, iconBoxes);
+              return y?.os === os && y.icons.some((i) => i.strip) && y.icons.some((i) => !i.strip) && y;
+            });
+            seen.push({ theme, ...x });
+          };
+          for (const [theme, os] of [
+            ['dark', 'light'],
+            ['light', 'dark'],
+            ['system', 'dark'],
+          ]) {
+            const h = await c.open(flavor, { tab, theme });
+            await pause(120); // past the open motion's scale
+            await look(h, theme, os);
+            if (theme === 'system') await look(h, theme, 'light');
+            await c.reset();
+          }
+          return {
+            pass: seen.every((x) => x.icons.every((i) => i.bare && near(i.width, 16, 0.5) && near(i.height, 16, 0.5))),
+            measured: { seen },
+          };
+        }),
+    );
 
   // ---- Icons
 

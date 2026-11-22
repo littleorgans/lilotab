@@ -10,7 +10,7 @@ import {
   type SettingGroup,
   type Settings,
 } from '../../core/index.ts';
-import { OPTIONS_TEXT as T, SETTING_TEXT } from '../../strings.ts';
+import { OPTIONS_TEXT as T, SETTING_TEXT } from '../strings.ts';
 import { el, hint, row } from '../dom.ts';
 import { segmented, type Segmented } from './segmented.ts';
 

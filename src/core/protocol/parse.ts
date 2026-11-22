@@ -1,12 +1,13 @@
-// Parsers for every boundary: exact shapes, values inside their enums and limits, or a rejection (05-events 4).
+// Worker to host and options parsers: exact shapes, values inside their enums and limits, or a rejection (05-events 4).
 
-import { hasExactly, isIndex, isOneOf, isRecord, isText, type Fields } from '../guards.ts';
+import { hasExactly, isCount, isIndex, isOneOf, isRecord, isRowRef, isText, type Fields } from '../guards.ts';
 import { SCHEMA } from '../settings/index.ts';
-import type { AttemptId, RowRef } from '../types.ts';
+import type { RowRef } from '../types.ts';
 import { heldOf } from './binding.ts';
 import { MODIFIERS } from './keys.ts';
 import {
-  PAGE_MAX,
+  AGE_MAX,
+  AGE_UNITS,
   PROTOCOL,
   QUERY_MAX,
   SITE_MAX,
@@ -14,10 +15,7 @@ import {
   URL_MAX,
   iconSrc,
   type Binding,
-  type ChannelPhase,
   type Frame,
-  type HostInput,
-  type HostToWorker,
   type IconPatch,
   type ListView,
   type OptionsReply,
@@ -26,91 +24,8 @@ import {
   type WorkerToHost,
 } from './messages.ts';
 
-// ---- channel names and phases (05 4.1, 4.4)
-
-const ATTEMPT = /^[A-Za-z0-9_-]+:\d+:\d+$/;
-
-export const portName = (attempt: AttemptId): string => `${String(PROTOCOL)}|${attempt}`;
-
-// null: another protocol version or a bad shape.
-export function parsePortName(name: string): AttemptId | null {
-  const bar = name.indexOf('|');
-  const attempt = name.slice(bar + 1);
-  return bar > 0 && name.slice(0, bar) === String(PROTOCOL) && ATTEMPT.test(attempt) ? attempt : null;
-}
-
-// The handshake rule: ready opens, an overlay may decline once, input only once open (05 4.4).
-export function admit(host: 'overlay' | 'popup', phase: ChannelPhase, m: HostToWorker): ChannelPhase | 'violation' {
-  if (phase === 'opening' && m.t === 'ready') return 'open';
-  if (phase === 'opening' && m.t === 'declined' && host === 'overlay') return 'done';
-  if (phase === 'open' && m.t === 'input') return 'open';
-  return 'violation';
-}
-
-// ---- host to worker (05 4.6)
-
-const DELTAS = [1, -1] as const;
-const CAUSES = ['key', 'blur', 'hidden', 'pageLeave'] as const;
-const REASONS = ['unfocused', 'frameFocus', 'pdf', 'unsupported'] as const;
-const ENDS = ['first', 'last'] as const;
-const BARE = ['latchSearch', 'leaveSearch', 'enter', 'ping', 'activity', 'close'] as const;
-
-const isRowRef = (raw: unknown): raw is RowRef =>
-  hasExactly(raw, ['window', 'row']) && isIndex(raw['window'], Infinity) && isIndex(raw['row'], Infinity);
-
-function parseInput(raw: unknown): HostInput | null {
-  if (!isRecord(raw)) return null;
-  const kind = raw['kind'];
-  if (isOneOf(kind, BARE)) return hasExactly(raw, ['kind']) ? { kind } : null;
-  const field = (name: string): unknown => (hasExactly(raw, ['kind', name]) ? raw[name] : undefined);
-  switch (kind) {
-    case 'release': {
-      const inferred = field('inferred');
-      return typeof inferred === 'boolean' ? { kind, inferred } : null;
-    }
-    case 'step':
-    case 'move':
-    case 'window': {
-      const delta = field('delta');
-      return isOneOf(delta, DELTAS) ? { kind, delta } : null;
-    }
-    case 'query': {
-      const text = field('text');
-      return isText(text, QUERY_MAX) ? { kind, text } : null;
-    }
-    case 'jump': {
-      const to = field('to');
-      return isOneOf(to, ENDS) ? { kind, to } : null;
-    }
-    case 'page': {
-      if (!hasExactly(raw, ['kind', 'delta', 'rows'])) return null;
-      const { delta, rows } = raw;
-      return isOneOf(delta, DELTAS) && isIndex(rows, PAGE_MAX + 1) && rows > 0 ? { kind, delta, rows } : null;
-    }
-    case 'pick': {
-      const row = field('row');
-      return isRowRef(row) ? { kind, row: { window: row.window, row: row.row } } : null;
-    }
-    case 'cancel': {
-      const cause = field('cause');
-      return isOneOf(cause, CAUSES) ? { kind, cause } : null;
-    }
-    default:
-      return null;
-  }
-}
-
-export function parseHostToWorker(raw: unknown): HostToWorker | null {
-  if (hasExactly(raw, ['t'])) return raw['t'] === 'ready' ? { t: 'ready' } : null;
-  if (hasExactly(raw, ['t', 'reason'])) {
-    return raw['t'] === 'declined' && isOneOf(raw['reason'], REASONS) ? { t: 'declined', reason: raw['reason'] } : null;
-  }
-  if (hasExactly(raw, ['t', 'input']) && raw['t'] === 'input') {
-    const input = parseInput(raw['input']);
-    return input ? { t: 'input', input } : null;
-  }
-  return null;
-}
+export { admit, parseHostToWorker, parsePortName } from './channel-receiver.ts';
+export { portName } from './messages.ts';
 
 // ---- worker to host (05 4.5)
 
@@ -134,13 +49,32 @@ const isLook = (raw: unknown): boolean =>
   isOneOf(raw['reduceMotion'], SCHEMA.reduceMotion.values) &&
   isOneOf(raw['textSize'], SCHEMA.textSize.values);
 
+// The count [0, lead) leaves part of the title; the site name [tail, length) follows it (C-HOLD-34).
+function isNoise(raw: unknown, length: number): boolean {
+  if (!hasExactly(raw, ['lead', 'tail'])) return false;
+  const { lead, tail } = raw;
+  if (lead !== 0 && !isIndex(lead, length)) return false;
+  return tail === null || (isIndex(tail, length + 1) && tail >= lead);
+}
+
+const isAge = (raw: unknown): boolean =>
+  raw === null ||
+  (hasExactly(raw, ['n', 'unit']) &&
+    isOneOf(raw['unit'], AGE_UNITS) &&
+    isCount(raw['n'], 1) &&
+    raw['n'] <= AGE_MAX[raw['unit']]);
+
 const isRow = (raw: unknown): boolean =>
-  hasExactly(raw, ['title', 'site', 'pinned', 'audible', 'icon']) &&
+  hasExactly(raw, ['title', 'site', 'pinned', 'audible', 'sleeping', 'icon', 'noise', 'age', 'dup']) &&
   isText(raw['title'], TITLE_MAX) &&
   isText(raw['site'], SITE_MAX) &&
   typeof raw['pinned'] === 'boolean' &&
   typeof raw['audible'] === 'boolean' &&
-  (raw['icon'] === null || (typeof raw['icon'] === 'string' && iconSrc(raw['icon']) !== null));
+  typeof raw['sleeping'] === 'boolean' &&
+  (raw['icon'] === null || (typeof raw['icon'] === 'string' && iconSrc(raw['icon']) !== null)) &&
+  isNoise(raw['noise'], raw['title'].length) &&
+  isAge(raw['age']) &&
+  (raw['dup'] === null || isIndex(raw['dup'], Infinity));
 
 const isWindowView = (raw: unknown): raw is Fields & { rows: unknown[]; current: number } =>
   hasExactly(raw, ['current', 'rows']) &&
@@ -168,6 +102,13 @@ const inShape = (ref: RowRef, shape: readonly number[]) => isIndex(ref.row, shap
 const isRefs = (raw: unknown, shape: readonly number[]): raw is RowRef[] =>
   Array.isArray(raw) && raw.every((r) => isRowRef(r) && inShape(r, shape));
 
+const SORTS = [...SCHEMA.tabOrder.values, 'best', 'title'] as const;
+
+// Every row of the shown window once (C-HOLD-29).
+const isOrder = (raw: unknown, rows: number): boolean =>
+  raw === null ||
+  (Array.isArray(raw) && raw.length === rows && raw.every((r) => isIndex(r, rows)) && new Set(raw).size === rows);
+
 const isCopy = (raw: unknown): boolean =>
   raw === null || (hasExactly(raw, ['title', 'url']) && isText(raw['title'], TITLE_MAX) && isText(raw['url'], URL_MAX));
 
@@ -175,32 +116,35 @@ const isCopy = (raw: unknown): boolean =>
 // the closed window.
 function isFrame(raw: unknown, shape: readonly number[]): raw is Frame {
   if (!isRecord(raw)) return false;
-  if (!isCopy(raw['copy'])) return false;
+  if (!isCopy(raw['copy']) || !isOneOf(raw['sort'], SORTS)) return false;
+  const open = shape.slice(0, -1);
   if (raw['mode'] === 'hold') {
-    const open = shape.slice(0, -1);
     return (
-      hasExactly(raw, ['mode', 'visible', 'open', 'window', 'row', 'gone', 'copy']) &&
+      hasExactly(raw, ['mode', 'visible', 'open', 'window', 'row', 'gone', 'copy', 'sort', 'order']) &&
       typeof raw['visible'] === 'boolean' &&
       typeof raw['open'] === 'boolean' &&
       isIndex(raw['window'], open.length) &&
       isIndex(raw['row'], open[raw['window']] ?? 0) &&
-      isRefs(raw['gone'], open)
+      isRefs(raw['gone'], open) &&
+      isOrder(raw['order'], open[raw['window']] ?? 0)
     );
   }
   const results = raw['results'];
   return (
     raw['mode'] === 'search' &&
-    hasExactly(raw, ['mode', 'query', 'results', 'highlight', 'copy']) &&
+    hasExactly(raw, ['mode', 'query', 'results', 'highlight', 'copy', 'sort', 'gone']) &&
     isText(raw['query'], QUERY_MAX) &&
     isRefs(results, shape) &&
-    (results.length === 0 ? raw['highlight'] === 0 : isIndex(raw['highlight'], results.length))
+    (results.length === 0 ? raw['highlight'] === 0 : isIndex(raw['highlight'], results.length)) &&
+    isRefs(raw['gone'], open)
   );
 }
 
 function isStart(raw: unknown): raw is StartView {
-  if (!hasExactly(raw, ['mode', 'binding', 'quickTap', 'look', 'view', 'frame'])) return false;
+  if (!hasExactly(raw, ['mode', 'binding', 'quickTap', 'onRelease', 'look', 'view', 'frame'])) return false;
   const mode = raw['mode'];
   if (!isOneOf(mode, ['hold', 'search'] as const) || !isOneOf(raw['quickTap'], SCHEMA.quickTap.values)) return false;
+  if (!isOneOf(raw['onRelease'], SCHEMA.onRelease.values)) return false;
   if (!isLook(raw['look']) || !isListView(raw['view'])) return false;
   const binding = raw['binding'];
   if (binding === null ? mode !== 'search' : !isBinding(binding)) return false;

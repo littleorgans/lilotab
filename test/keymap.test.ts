@@ -17,6 +17,7 @@ const HOLD: KeyContext = {
   mode: 'hold',
   origin: 'hold',
   open: false,
+  onRelease: 'switch',
   field: null,
   mac: true,
   pageRows: 8,
@@ -91,6 +92,18 @@ const rows: Row[] = [
     expected: kept({ kind: 'latchSearch' }),
   },
   {
+    name: 'K-31 C-HOLD-37: held End jumps last',
+    facts: cmd('End'),
+    context: HOLD,
+    expected: kept({ kind: 'jump', to: 'last' }),
+  },
+  {
+    name: 'K-32 C-HOLD-37: held Page Down during IME composition sends activity and reaches the page',
+    facts: cmd('PageDown', { composing: true }),
+    context: HOLD,
+    expected: seen({ kind: 'activity' }),
+  },
+  {
     name: 'K-08 C-HOLD-13: another held key sends activity and reaches the page',
     facts: cmd('t'),
     context: HOLD,
@@ -106,6 +119,12 @@ const rows: Row[] = [
   {
     name: 'K-03 C-HOLD-12: another key without the held key is an inferred release',
     facts: keyFacts('ArrowDown'),
+    context: HOLD,
+    expected: seen({ kind: 'release', inferred: true }),
+  },
+  {
+    name: 'K-03 C-HOLD-37: Home without the held key is an inferred release',
+    facts: keyFacts('Home'),
     context: HOLD,
     expected: seen({ kind: 'release', inferred: true }),
   },
@@ -169,6 +188,12 @@ const rows: Row[] = [
     facts: keyFacts('f', { repeat: true }),
     context: OPEN,
     expected: kept(null),
+  },
+  {
+    name: 'K-32 C-HOLD-37: open, unheld Page Up moves by the rows the list shows',
+    facts: keyFacts('PageUp'),
+    context: OPEN,
+    expected: kept({ kind: 'page', delta: -1, rows: 8 }),
   },
   {
     name: 'K-29 C-TAP-11: open, Tab sends activity and is swallowed',
@@ -351,6 +376,61 @@ const rows: Row[] = [
     facts: cmd('c'),
     context: { ...HOLD, binding: binding('meta', 'C') },
     expected: kept({ kind: 'step', delta: 1 }),
+  },
+  // the sort key (K-35 to K-37)
+  {
+    name: 'K-35 C-HOLD-29: closed hold, Cmd+S sorts and is swallowed',
+    facts: cmd('s'),
+    context: HOLD,
+    expected: kept({ kind: 'sort' }),
+  },
+  {
+    name: 'K-35 C-HOLD-29: closed hold, a repeated Cmd+S sends nothing and is swallowed',
+    facts: cmd('s', { repeat: true }),
+    context: HOLD,
+    expected: kept(null),
+  },
+  {
+    name: 'K-36 C-TAP-11: open, a bare S sorts',
+    facts: keyFacts('s'),
+    context: OPEN,
+    expected: kept({ kind: 'sort' }),
+  },
+  {
+    name: 'K-37 C-POP-09: toolbar search with no binding, Cmd+S sorts',
+    facts: cmd('s'),
+    context: TOOLBAR,
+    expected: kept({ kind: 'sort' }),
+  },
+  {
+    name: 'K-37 C-SRCH-29: search elsewhere with an Alt binding, Ctrl+S sorts',
+    facts: keyFacts('s', { ctrl: true }),
+    context: { ...SEARCH, binding: binding('alt', 'Q'), mac: false },
+    expected: kept({ kind: 'sort' }),
+  },
+  {
+    name: 'K-37 C-SRCH-29: search with an Option binding on macOS, Option+S sorts though it types ß',
+    facts: keyFacts('ß', { alt: true, code: 'KeyS' }),
+    context: { ...SEARCH, binding: binding('alt', 'Q') },
+    expected: kept({ kind: 'sort' }),
+  },
+  {
+    name: 'K-37 C-SRCH-29: search elsewhere with an Alt binding, AltGr+S producing ś belongs to the field',
+    facts: keyFacts('ś', { ctrl: true, alt: true, code: 'KeyS' }),
+    context: { ...SEARCH, binding: binding('alt', 'Q'), mac: false },
+    expected: seen(null),
+  },
+  {
+    name: 'K-35 K-04: hold, a binding letter S steps before it sorts',
+    facts: cmd('s'),
+    context: { ...HOLD, binding: binding('meta', 'S') },
+    expected: kept({ kind: 'step', delta: 1 }),
+  },
+  {
+    name: 'K-37 K-18: search, Cmd+S during IME composition sends nothing',
+    facts: cmd('s', { composing: true }),
+    context: SEARCH,
+    expected: seen(null),
   },
   // untrusted
   ...[HOLD, OPEN, SEARCH].map((context): Row => ({
