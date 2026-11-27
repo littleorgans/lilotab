@@ -1,12 +1,12 @@
 # Lilotab
 
-Switch Chrome tabs from the keyboard, the way Cmd+Tab switches apps. By littleorgans; see [lilotab.com](https://lilotab.com).
+Switch Chrome tabs from the keyboard. By littleorgans; see [lilotab.com](https://lilotab.com).
 
 By default, tap the shortcut to jump back to your last tab. Hold it to see every tab in the window, most recent first, and release to switch.
 
 ## Why Lilotab
 
-- **Your last tab is one tap away.** Chrome's Ctrl+Tab moves by position in the tab strip. Lilotab goes back to the tab you actually used last.
+- **Your last tab is one tap away.** Lilotab goes back to the tab you used last, even in another window, and the next tap brings you back.
 - **One shortcut does it all.** Tap to flip, hold for the list, press F while holding to search. Your hands stay on the keyboard.
 - **Every window, not just this one.** Left and Right step through your windows. Search covers tabs across all of them.
 - **Works where you are.** The list opens over the page, above dialogs and fullscreen content. On pages that cannot host it, such as browser pages or PDFs, it opens in the toolbar popup.
@@ -14,21 +14,22 @@ By default, tap the shortcut to jump back to your last tab. Hold it to see every
 
 ## Install
 
-**Chrome Web Store: link coming soon.**
+1. Download `lilotab-0.1.0.zip` from the [v0.1.0 release](https://github.com/littleorgans/lilotab/releases/tag/v0.1.0) and unzip it into its own folder.
+2. Open `chrome://extensions` and turn on Developer mode.
+3. Click Load unpacked and choose the unzipped folder.
 
-Requires desktop Chrome 148 or later. Lilotab does not run in private windows.
+Keep the folder: Chrome runs Lilotab from it. Requires desktop Chrome 148 or later. Lilotab does not run in private windows.
 
 The default shortcut is Cmd+E on macOS and Alt+Q elsewhere. Change it at `chrome://extensions/shortcuts`. A welcome tab shows your shortcut on first install.
 
 Vivaldi is out of the browser test matrix for now: it rejects `chrome.action.openPopup` (Vivaldi bug VB-120122), so the toolbar popup does not open there.
 
-### Load unpacked
+### Build from source
 
-Until the Store listing is live, build Lilotab from source. You need Node 24.22.1 and just 1.59, as pinned in `mise.toml`.
+You need Node 24.22.1 and just 1.59, as pinned in `mise.toml`.
 
 1. Clone this repository, then run `just install` and `just build`. The build writes the extension to `dist/`.
-2. Open `chrome://extensions` and turn on Developer mode.
-3. Click Load unpacked and choose the `dist/` folder.
+2. Load `dist/` as in steps 2 and 3 above.
 
 `just build-timing` creates a measurement build in `dist-timing/` with the gesture timing log on the options page; load it unpacked from that folder and never ship it. `just build` stays a release build in `dist/`.
 
@@ -45,10 +46,12 @@ Until the Store listing is live, build Lilotab from source. You need Node 24.22.
 
 ## Privacy
 
+- **What it reads.** To show and search your tabs, Lilotab reads the title, address and icon of your open tabs. They never leave your device and are never written to storage.
 - **No network.** Lilotab makes no network requests and has no account, sync or telemetry. Tab icons come from the browser's own favicon cache.
 - **No standing site access.** It asks for no host permissions and runs no content scripts. It reaches a page only when you press the shortcut on it.
 - **Permissions:** `storage`, `tabs`, `favicon`, `activeTab` and `scripting`, plus the optional `sessions`, asked for only when you turn on recently closed tabs in search and given back when you turn it off. Nothing else.
-- **Stays on your device.** Settings live in Chrome's local extension storage. Recent tab history lives in session storage and clears when the browser closes or Lilotab updates.
+- **What it stores.** Chrome's local extension storage holds your settings and the ids of the tabs Lilotab keeps from sleeping, the two a tap switches between. Recent tab history lives in session storage and clears when the browser closes or Lilotab updates; it holds only tab and window ids and the order you used them in. Lilotab stores no titles, addresses, icons or times.
+- **Recently closed tabs in search.** Off by default. When on, Lilotab reads Chrome's list of up to 25 tabs recently closed on this device, with their titles, addresses and closing times, when you press the shortcut. It stores no copy.
 
 ## Contributing
 

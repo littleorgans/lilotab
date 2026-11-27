@@ -38,6 +38,9 @@ const landedOn = (c, title, since) =>
 // Every leaf is a number: the recents envelope holds tab and window ids and use numbers only (C-DATA-01).
 const numbersOnly = (v) =>
   typeof v === 'number' || (v !== null && typeof v === 'object' && Object.values(v).every(numbersOnly));
+// The keep warm journal holds only the tab ids Lilotab keeps awake (06-data.md section 3).
+const tabIds = (v) => Array.isArray(v) && v.every((id) => Number.isInteger(id) && id >= 0);
+const localKeys = { settings: () => true, keepWarm: tabIds };
 
 // Records every page, popup and worker session's network requests, console writes and storage changes for the run.
 class Traffic {
@@ -602,7 +605,7 @@ export function journeyScenarios(c, e, add) {
   );
   add(
     'JY-8-storedShape',
-    'C-DATA-01, C-ICON-06: every storage change of the run and the final state: session holds only the recents envelope of numbers, local only settings',
+    'C-DATA-01, C-ICON-06: every storage change of the run and the final state: session holds only the recents envelope of numbers, local only settings and the keepWarm tab ids',
     async () => {
       const final = await c.workerEval(
         '(async()=>({session:await chrome.storage.session.get(null),local:await chrome.storage.local.get(null)}))()',
@@ -612,7 +615,7 @@ export function journeyScenarios(c, e, add) {
       );
       const allowed = ({ area, key, newValue }) =>
         (area === 'session' && key === 'recents' && (newValue === undefined || numbersOnly(newValue))) ||
-        (area === 'local' && key === 'settings');
+        (area === 'local' && Object.hasOwn(localKeys, key) && localKeys[key](newValue));
       const found = changes.filter((x) => !allowed(x));
       return {
         pass:
@@ -620,7 +623,7 @@ export function journeyScenarios(c, e, add) {
           found.length === 0 &&
           Object.keys(final.session).every((k) => k === 'recents') &&
           numbersOnly(final.session.recents ?? 0) &&
-          Object.keys(final.local).every((k) => k === 'settings'),
+          Object.entries(final.local).every(([k, v]) => Object.hasOwn(localKeys, k) && localKeys[k](v)),
         measured: {
           changes: changes.length,
           found,
