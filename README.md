@@ -1,60 +1,27 @@
+![A print of Kern, an angular red figure, pinching one row of the Lilotab menu, a dark list of open tabs under a strip of window icons, in front of a wall of crammed browser windows, beside the name Lilotab in heavy type on a red band and the Command and E keys.](assets/banner.png)
+
 # Lilotab
 
-Switch Chrome tabs from the keyboard. By littleorgans; see [lilotab.com](https://lilotab.com).
+Switch Chrome tabs from the keyboard.
 
-By default, tap the shortcut to jump back to your last tab. Hold it to see every tab in the window, most recent first, and release to switch.
+It's not just a tab switcher. It's a tab finder.
 
-## Why Lilotab
-
-- **Your last tab is one tap away.** Lilotab goes back to the tab you used last, even in another window, and the next tap brings you back.
-- **One shortcut does it all.** Tap to flip, hold for the list, press F while holding to search. Your hands stay on the keyboard.
-- **Every window, not just this one.** Left and Right step through your windows. Search covers tabs across all of them.
-- **Works where you are.** The list opens over the page, above dialogs and fullscreen content. On pages that cannot host it, such as browser pages or PDFs, it opens in the toolbar popup.
-- **Small footprint.** No access to the sites you visit until you press the shortcut, no network and no account. See [Privacy](#privacy).
+- Open a menu that displays all your tabs across all windows.
+- Easily move between windows and tabs.
+- Toggle between your most recent and your previous tab.
+- Curate your tabs: close them one by one, right from the menu.
+- Search across all of your tabs.
 
 ## Install
+
+<!-- When the Chrome Web Store listing is live, replace the ZIP steps with: Add it to Chrome from the [Chrome Web Store](STORE_URL). -->
 
 1. Download `lilotab-0.1.0.zip` from the [v0.1.0 release](https://github.com/littleorgans/lilotab/releases/tag/v0.1.0) and unzip it into its own folder.
 2. Open `chrome://extensions` and turn on Developer mode.
 3. Click Load unpacked and choose the unzipped folder.
 
-Keep the folder: Chrome runs Lilotab from it. Requires desktop Chrome 148 or later. Lilotab does not run in private windows.
+The shortcut is Command E on Mac, Alt Q on Windows and Linux. Change it at `chrome://extensions/shortcuts`.
 
-The default shortcut is Cmd+E on macOS and Alt+Q elsewhere. Change it at `chrome://extensions/shortcuts`. A welcome tab shows your shortcut on first install.
+Tap for your last used tab. Hold to choose.
 
-Vivaldi is out of the browser test matrix for now: it rejects `chrome.action.openPopup` (Vivaldi bug VB-120122), so the toolbar popup does not open there.
-
-### Build from source
-
-You need Node 24.22.1 and just 1.59, as pinned in `mise.toml`.
-
-1. Clone this repository, then run `just install` and `just build`. The build writes the extension to `dist/`.
-2. Load `dist/` as in steps 2 and 3 above.
-
-`just build-timing` creates a measurement build in `dist-timing/` with the gesture timing log on the options page; load it unpacked from that folder and never ship it. `just build` stays a release build in `dist/`.
-
-## How it works
-
-- **Tap** the shortcut to switch to your last used tab.
-- **Hold** the modifier to see the tabs in this window, most recent first. Press the shortcut letter again or use the arrow keys to move. With the default **On release** setting, release to switch. With **Keep list open**, moving the selection keeps the list open after release. Use Enter or click a row to switch, or press Esc to close.
-- **Windows:** Left and Right step through windows on a strip of window icons.
-- **Search:** press F while holding to search tabs across every window. Press the modifier and F again to drop the query and go back to the window list. The **On release** setting applies when you return to the list.
-- **Sort:** press S while holding to sort the list by title, and again to go back. In search, Cmd+S (Ctrl+S on Windows and Linux) sorts too.
-- **Toolbar:** click the toolbar icon to search all your tabs.
-
-**Settings:** quick tap (flip to last tab or open the list), quick tap scope, hold delay, tab order, where the list shows, what happens on release, recently closed tabs in search, a tab count badge, theme, text size and reduce motion, plus clearing history and restoring defaults.
-
-## Privacy
-
-- **What it reads.** To show and search your tabs, Lilotab reads the title, address and icon of your open tabs. They never leave your device and are never written to storage.
-- **No network.** Lilotab makes no network requests and has no account, sync or telemetry. Tab icons come from the browser's own favicon cache.
-- **No standing site access.** It asks for no host permissions and runs no content scripts. It reaches a page only when you press the shortcut on it.
-- **Permissions:** `storage`, `tabs`, `favicon`, `activeTab` and `scripting`, plus the optional `sessions`, asked for only when you turn on recently closed tabs in search and given back when you turn it off. Nothing else.
-- **What it stores.** Chrome's local extension storage holds your settings and the ids of the tabs Lilotab keeps from sleeping, the two a tap switches between. Recent tab history lives in session storage and clears when the browser closes or Lilotab updates; it holds only tab and window ids and the order you used them in. Lilotab stores no titles, addresses, icons or times.
-- **Recently closed tabs in search.** Off by default. When on, Lilotab reads Chrome's list of up to 25 tabs recently closed on this device, with their titles, addresses and closing times, when you press the shortcut. It stores no copy.
-
-## Contributing
-
-We are not accepting pull requests. For known problems and workarounds, see [Known issues](KNOWN_ISSUES.md).
-
-Source available under PolyForm Perimeter 1.0.1 (LICENSE). Providing a competing product, including a free rebranded store copy, is not permitted. See TRADEMARKS.md.
+[How it works](HOW_IT_WORKS.md) · [Privacy](PRIVACY.md) · [Known issues](KNOWN_ISSUES.md)
